@@ -213,50 +213,46 @@ function MoedaCard({
           <span className="font-mono text-muted" title="A integrar extrato bancário">—</span>
         </div>
 
-        {/* A Receber */}
-        <button onClick={onToggleReceber} className="w-full text-left">
+        {/* Realizado (já passou) */}
+        <div className="border-t border-border pt-3 space-y-3">
           <div className="flex items-center justify-between text-sm">
-            <span className="text-muted">A receber</span>
-            <span className="font-mono text-emerald-300">{formatCurrency(data.a_receber, moeda)}</span>
+            <span className="text-muted">Recebido (mês)</span>
+            <span className="font-mono text-emerald-300">{formatCurrency(data.recebido_mes, moeda)}</span>
           </div>
-        </button>
-        {expandedReceber && (
-          <div className="ml-3 space-y-1 border-l border-border pl-3 text-xs">
-            <BreakdownRow label="NF a receber" value={data.breakdown_a_receber.nf_receivables} moeda={moeda} />
-            <BreakdownRow label="Fechamentos abertos" value={data.breakdown_a_receber.fechamentos} moeda={moeda} />
-            <BreakdownRow label="Transações" value={data.breakdown_a_receber.transactions} moeda={moeda} />
-          </div>
-        )}
-
-        {/* A Pagar */}
-        <button onClick={onTogglePagar} className="w-full text-left">
           <div className="flex items-center justify-between text-sm">
-            <span className="text-muted">A pagar</span>
-            <span className="font-mono text-danger">{formatCurrency(data.a_pagar, moeda)}</span>
+            <span className="text-muted">Pago (mês)</span>
+            <span className="font-mono text-danger">{formatCurrency(data.pago_mes, moeda)}</span>
           </div>
-        </button>
-        {expandedPagar && (
-          <div className="ml-3 space-y-1 border-l border-border pl-3 text-xs">
-            <BreakdownRow label="NF a pagar" value={data.breakdown_a_pagar.nf_invoices} moeda={moeda} />
-            <BreakdownRow label="Transações" value={data.breakdown_a_pagar.transactions} moeda={moeda} />
-          </div>
-        )}
+        </div>
 
-        <div className="border-t border-border pt-3 space-y-1.5">
-          <div className="flex items-center justify-between text-xs text-muted">
-            <span className="flex items-center gap-1">
-              <TrendingUp className="h-3 w-3 text-emerald-400" />
-              Recebido (mês)
-            </span>
-            <span className="font-mono">{formatCurrency(data.recebido_mes, moeda)}</span>
-          </div>
-          <div className="flex items-center justify-between text-xs text-muted">
-            <span className="flex items-center gap-1">
-              <TrendingDown className="h-3 w-3 text-danger" />
-              Pago (mês)
-            </span>
-            <span className="font-mono">{formatCurrency(data.pago_mes, moeda)}</span>
-          </div>
+        {/* Pendente (ainda vai acontecer) */}
+        <div className="border-t border-border pt-3 space-y-3">
+          <button onClick={onToggleReceber} className="w-full text-left">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted">A receber</span>
+              <span className="font-mono text-emerald-300">{formatCurrency(data.a_receber, moeda)}</span>
+            </div>
+          </button>
+          {expandedReceber && (
+            <div className="ml-3 space-y-1 border-l border-border pl-3 text-xs">
+              <BreakdownRow label="NF a receber" value={data.breakdown_a_receber.nf_receivables} moeda={moeda} />
+              <BreakdownRow label="Fechamentos abertos" value={data.breakdown_a_receber.fechamentos} moeda={moeda} />
+              <BreakdownRow label="Transações" value={data.breakdown_a_receber.transactions} moeda={moeda} />
+            </div>
+          )}
+
+          <button onClick={onTogglePagar} className="w-full text-left">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted">A pagar</span>
+              <span className="font-mono text-danger">{formatCurrency(data.a_pagar, moeda)}</span>
+            </div>
+          </button>
+          {expandedPagar && (
+            <div className="ml-3 space-y-1 border-l border-border pl-3 text-xs">
+              <BreakdownRow label="NF a pagar" value={data.breakdown_a_pagar.nf_invoices} moeda={moeda} />
+              <BreakdownRow label="Transações" value={data.breakdown_a_pagar.transactions} moeda={moeda} />
+            </div>
+          )}
         </div>
 
         {(() => {
