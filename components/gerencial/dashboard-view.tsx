@@ -207,6 +207,12 @@ function MoedaCard({
       </div>
 
       <div className="space-y-3">
+        {/* Saldo atual (banco — placeholder, viraremos real depois) */}
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted">Saldo atual</span>
+          <span className="font-mono text-muted" title="A integrar extrato bancário">—</span>
+        </div>
+
         {/* A Receber */}
         <button onClick={onToggleReceber} className="w-full text-left">
           <div className="flex items-center justify-between text-sm">
@@ -238,11 +244,12 @@ function MoedaCard({
 
         <div className="border-t border-border pt-3">
           <div className="flex items-center justify-between text-sm">
-            <span className="font-semibold text-foreground">Saldo a provisionar</span>
+            <span className="font-semibold text-foreground">Saldo Est. fim do mês</span>
             <span
               className={`font-mono font-semibold ${
                 data.saldo_projetado >= 0 ? "text-emerald-300" : "text-danger"
               }`}
+              title="Saldo atual (0 por enquanto) + a receber − a pagar"
             >
               {formatCurrency(data.saldo_projetado, moeda)}
             </span>
