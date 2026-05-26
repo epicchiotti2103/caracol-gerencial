@@ -25,7 +25,7 @@ interface Props {
   onSaved: (t: GerencialTransaction) => void;
 }
 
-const CATEGORIES = ["salario", "fixo", "parceiro", "marketing", "infra", "imposto", "ad_hoc"];
+const CATEGORIES = ["Fixo", "Variável", "Salário"];
 
 export function TransactionEditModal({ transaction, onClose, onSaved }: Props) {
   const isEdit = !!transaction;
@@ -33,7 +33,7 @@ export function TransactionEditModal({ transaction, onClose, onSaved }: Props) {
   const monthOpts = buildMonthOptions();
 
   const [kind, setKind] = useState<TransactionKind>(transaction?.kind || "despesa");
-  const [category, setCategory] = useState(transaction?.category || "fixo");
+  const [category, setCategory] = useState(transaction?.category || "Fixo");
   const [description, setDescription] = useState(transaction?.description || "");
   const [amount, setAmount] = useState(
     transaction?.amount != null ? blurFormatNumberPtBr(String(transaction.amount)) : ""
@@ -106,7 +106,7 @@ export function TransactionEditModal({ transaction, onClose, onSaved }: Props) {
       >
         <div className="flex items-center justify-between border-b border-border bg-zinc-950 px-6 py-4">
           <p className="text-base font-semibold text-orange-50">
-            {isEdit ? "Editar transação" : "Nova transação"}
+            {isEdit ? "Editar movimentação" : "Nova movimentação"}
           </p>
           <button onClick={onClose} className="text-orange-100/40 hover:text-orange-50" aria-label="Fechar">
             <X className="h-5 w-5" />
@@ -151,7 +151,7 @@ export function TransactionEditModal({ transaction, onClose, onSaved }: Props) {
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
                 className={inputCls}
-                placeholder="salario, fixo, parceiro, ad_hoc..."
+                placeholder="Fixo, Variável, Salário..."
                 list="cat-list"
               />
               <datalist id="cat-list">

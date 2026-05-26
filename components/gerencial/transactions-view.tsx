@@ -157,7 +157,7 @@ export function TransactionsView() {
             className="flex items-center gap-2 rounded-lg bg-primary px-3.5 py-2 text-sm font-semibold text-black hover:opacity-90"
           >
             <Plus className="h-4 w-4" />
-            Nova transação
+            Nova movimentação
           </button>
         </div>
       </div>
@@ -254,7 +254,7 @@ export function TransactionsView() {
               ) : list.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-12 text-center text-sm text-muted">
-                    Nenhuma transação. Clique em "Nova transação" pra adicionar.
+                    Nenhuma movimentação. Clique em "Nova movimentação" pra adicionar.
                   </td>
                 </tr>
               ) : (
