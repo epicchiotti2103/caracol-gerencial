@@ -147,18 +147,17 @@ export function TransactionEditModal({ transaction, onClose, onSaved }: Props) {
             {/* Categoria */}
             <div>
               <label className="mb-1.5 block text-sm font-medium text-foreground">Categoria</label>
-              <input
+              <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
                 className={inputCls}
-                placeholder="Fixo, Variável, Salário..."
-                list="cat-list"
-              />
-              <datalist id="cat-list">
+              >
                 {CATEGORIES.map((c) => (
-                  <option key={c} value={c} />
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
                 ))}
-              </datalist>
+              </select>
             </div>
 
             {/* Descricao */}
