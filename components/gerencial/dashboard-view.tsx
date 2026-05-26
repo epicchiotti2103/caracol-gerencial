@@ -260,10 +260,10 @@ function MoedaCard({
           const saldoEst = saldoAtual + data.recebido_mes + data.a_receber - data.pago_mes - data.a_pagar;
           return (
             <div className="border-t border-border pt-3">
-              <div className="flex items-center justify-between text-sm">
-                <span className="font-semibold text-foreground">Saldo Est. fim do mês</span>
+              <div className="flex items-center justify-between">
+                <span className="text-base font-semibold text-foreground">Saldo Est. fim do mês</span>
                 <span
-                  className={`font-mono font-semibold ${
+                  className={`font-mono text-lg font-semibold ${
                     saldoEst >= 0 ? "text-emerald-300" : "text-danger"
                   }`}
                   title="Saldo atual + recebido + a receber − pago − a pagar"
