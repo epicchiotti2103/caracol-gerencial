@@ -242,20 +242,6 @@ function MoedaCard({
           </div>
         )}
 
-        <div className="border-t border-border pt-3">
-          <div className="flex items-center justify-between text-sm">
-            <span className="font-semibold text-foreground">Saldo Est. fim do mês</span>
-            <span
-              className={`font-mono font-semibold ${
-                data.saldo_projetado >= 0 ? "text-emerald-300" : "text-danger"
-              }`}
-              title="Saldo atual (0 por enquanto) + a receber − a pagar"
-            >
-              {formatCurrency(data.saldo_projetado, moeda)}
-            </span>
-          </div>
-        </div>
-
         <div className="border-t border-border pt-3 space-y-1.5">
           <div className="flex items-center justify-between text-xs text-muted">
             <span className="flex items-center gap-1">
@@ -271,17 +257,27 @@ function MoedaCard({
             </span>
             <span className="font-mono">{formatCurrency(data.pago_mes, moeda)}</span>
           </div>
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-muted">Realizado</span>
-            <span
-              className={`font-mono ${
-                data.saldo_realizado >= 0 ? "text-emerald-300" : "text-danger"
-              }`}
-            >
-              {formatCurrency(data.saldo_realizado, moeda)}
-            </span>
-          </div>
         </div>
+
+        {(() => {
+          const saldoAtual = 0; // TODO integrar extrato bancário
+          const saldoEst = saldoAtual + data.recebido_mes + data.a_receber - data.pago_mes - data.a_pagar;
+          return (
+            <div className="border-t border-border pt-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-semibold text-foreground">Saldo Est. fim do mês</span>
+                <span
+                  className={`font-mono font-semibold ${
+                    saldoEst >= 0 ? "text-emerald-300" : "text-danger"
+                  }`}
+                  title="Saldo atual + recebido + a receber − pago − a pagar"
+                >
+                  {formatCurrency(saldoEst, moeda)}
+                </span>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
