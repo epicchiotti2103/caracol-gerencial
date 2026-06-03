@@ -1277,12 +1277,19 @@ function CashflowCell({
   title?: string;
 }) {
   if (value === 0) return <span className="text-right font-mono text-sm text-muted">—</span>;
+  if (!title) {
+    return <span className={`text-right font-mono text-sm ${tone}`}>{formatCurrency(value, moeda)}</span>;
+  }
   return (
-    <span
-      title={title}
-      className={`text-right font-mono text-sm ${tone} ${title ? "cursor-help underline decoration-dotted decoration-muted/40 underline-offset-4" : ""}`}
-    >
-      {formatCurrency(value, moeda)}
+    <span className="group relative flex justify-end">
+      <span
+        className={`cursor-help font-mono text-sm underline decoration-dotted decoration-muted/50 underline-offset-4 ${tone}`}
+      >
+        {formatCurrency(value, moeda)}
+      </span>
+      <span className="pointer-events-none absolute bottom-full right-0 z-20 mb-1 hidden whitespace-nowrap rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground shadow-lg group-hover:block">
+        {title}
+      </span>
     </span>
   );
 }
