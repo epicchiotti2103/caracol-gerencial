@@ -1178,8 +1178,8 @@ function FluxoTab() {
       ) : null}
 
       <div className="mt-6 space-y-6">
-        <ReconciliationSection />
-        <RemittancesSection />
+        <ReconciliationSection onChanged={load} />
+        <RemittancesSection onChanged={load} />
       </div>
     </>
   );
@@ -1292,7 +1292,7 @@ function CashflowMonthRow({
 
 /* ---- Saldos & Conciliação de caixa ---- */
 
-function ReconciliationSection() {
+function ReconciliationSection({ onChanged }: { onChanged?: () => void }) {
   const monthOpts = buildMonthOptions();
   const [month, setMonth] = useState(currentYearMonth());
   const [recon, setRecon] = useState<ReconciliationResponse | null>(null);
@@ -1315,6 +1315,12 @@ function ReconciliationSection() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Ao salvar um saldo: recarrega a conciliação E avisa o pai (projeção de caixa)
+  const handleSaved = useCallback(() => {
+    load();
+    onChanged?.();
+  }, [load, onChanged]);
 
   return (
     <div className="rounded-xl border border-border bg-surface">
@@ -1347,8 +1353,20 @@ function ReconciliationSection() {
         </div>
       ) : recon ? (
         <div className="grid gap-6 p-5 md:grid-cols-2">
-          <MoedaReconColumn moeda="BRL" month={month} nextMonth={recon.next_month} data={recon.brl} onSaved={load} />
-          <MoedaReconColumn moeda="USD" month={month} nextMonth={recon.next_month} data={recon.usd} onSaved={load} />
+          <MoedaReconColumn
+            moeda="BRL"
+            month={month}
+            nextMonth={recon.next_month}
+            data={recon.brl}
+            onSaved={handleSaved}
+          />
+          <MoedaReconColumn
+            moeda="USD"
+            month={month}
+            nextMonth={recon.next_month}
+            data={recon.usd}
+            onSaved={handleSaved}
+          />
         </div>
       ) : null}
     </div>
@@ -1441,21 +1459,25 @@ function EditableBalance({
 }) {
   const [v, setV] = useState("");
   const [saving, setSaving] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
 
   useEffect(() => {
     setV(value != null ? String(value).replace(".", ",") : "");
   }, [value, month]);
 
+  const parsed = parseNumberPtBr(v);
+  const dirty = v.trim() !== "" && Number.isFinite(parsed) && parsed !== (value ?? NaN);
+
   const save = async () => {
-    const parsed = parseNumberPtBr(v);
-    if (!Number.isFinite(parsed)) return;
-    if (value != null && parsed === value) return; // sem mudança
+    if (!Number.isFinite(parsed) || parsed === value) return; // inválido ou sem mudança
     setSaving(true);
+    setJustSaved(false);
     try {
       await apiFetch(`/gerencial/opening-balance`, {
         method: "PUT",
         body: JSON.stringify(moeda === "BRL" ? { month, brl: parsed } : { month, usd: parsed })
       });
+      setJustSaved(true);
       onSaved();
     } finally {
       setSaving(false);
@@ -1463,25 +1485,48 @@ function EditableBalance({
   };
 
   return (
-    <div className="flex items-center rounded-lg border border-border bg-background pl-2 focus-within:border-primary/50">
-      <span className="text-xs text-muted">{moeda === "BRL" ? "R$" : "US$"}</span>
-      <input
-        value={v}
-        onChange={(e) => setV(e.target.value)}
-        onBlur={save}
-        onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-        placeholder="0,00"
-        inputMode="decimal"
-        disabled={saving}
-        className="w-28 bg-transparent px-2 py-1.5 text-right font-mono text-sm text-foreground outline-none disabled:opacity-50"
-      />
+    <div className="flex items-center gap-1">
+      <div className="flex items-center rounded-lg border border-border bg-background pl-2 focus-within:border-primary/50">
+        <span className="text-xs text-muted">{moeda === "BRL" ? "R$" : "US$"}</span>
+        <input
+          value={v}
+          onChange={(e) => {
+            setV(e.target.value);
+            setJustSaved(false);
+          }}
+          onBlur={save}
+          onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+          placeholder="0,00"
+          inputMode="decimal"
+          disabled={saving}
+          className="w-28 bg-transparent px-2 py-1.5 text-right font-mono text-sm text-foreground outline-none disabled:opacity-50"
+        />
+      </div>
+      <button
+        onClick={save}
+        disabled={saving || (!dirty && !justSaved)}
+        title={dirty ? "Salvar" : justSaved ? "Salvo" : "Sem alterações"}
+        className={`rounded-lg border p-1.5 transition-colors ${
+          dirty
+            ? "border-primary/50 text-primary hover:bg-primary/10"
+            : justSaved
+            ? "border-emerald-400/40 text-emerald-300"
+            : "border-border text-muted"
+        }`}
+      >
+        {saving ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <Check className="h-3.5 w-3.5" />
+        )}
+      </button>
     </div>
   );
 }
 
 /* ---- Remessas internacionais (R$ → US$) ---- */
 
-function RemittancesSection() {
+function RemittancesSection({ onChanged }: { onChanged?: () => void }) {
   const [items, setItems] = useState<Remittance[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1528,6 +1573,7 @@ function RemittancesSection() {
       setUsdIn("");
       setNotes("");
       load();
+      onChanged?.();
     } catch (err: any) {
       setFormErr(err?.message || "Falha ao salvar.");
     } finally {
@@ -1538,6 +1584,7 @@ function RemittancesSection() {
   const remove = async (id: string) => {
     await apiFetch(`/gerencial/remittances/${id}`, { method: "DELETE" });
     load();
+    onChanged?.();
   };
 
   return (
