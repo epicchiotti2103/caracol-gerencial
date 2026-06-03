@@ -3,19 +3,76 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   RefreshCw,
-  TrendingUp,
-  TrendingDown,
   Wallet,
   AlertCircle,
-  Loader2
+  AlertTriangle,
+  Loader2,
+  ChevronDown,
+  ChevronRight
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
-import type { DashboardResponse, ForecastResponse, ForecastMonth, Moeda } from "@/types";
-import { formatCurrency, buildMonthOptions, currentYearMonth, formatMonthLabel } from "@/lib/format";
+import type {
+  DashboardResponse,
+  ForecastResponse,
+  ForecastMonth,
+  Moeda,
+  CashflowResponse,
+  CashflowItem,
+  CashflowMonth
+} from "@/types";
+import { formatCurrency, buildMonthOptions, currentYearMonth } from "@/lib/format";
+
+type Tab = "fechamento" | "fluxo";
+
+export function DashboardView() {
+  const [tab, setTab] = useState<Tab>("fechamento");
+
+  return (
+    <div className="mx-auto max-w-6xl px-6 py-8">
+      <div className="mb-6">
+        <h4 className="mb-1 text-xs font-semibold uppercase tracking-widest text-primary">Caracol Gerencial</h4>
+        <h1 className="text-2xl font-semibold text-foreground">Dashboard financeiro</h1>
+        <p className="mt-1 text-sm text-muted">
+          Duas visões: <span className="text-foreground">Fechamento</span> (regime de competência — o mês fechou no
+          azul?) e <span className="text-foreground">Fluxo de caixa</span> (regime de caixa — quanto preciso pagar e
+          quando vence).
+        </p>
+      </div>
+
+      {/* Tabs */}
+      <div className="mb-6 flex items-center gap-1 border-b border-border">
+        {(
+          [
+            { v: "fechamento", l: "Fechamento" },
+            { v: "fluxo", l: "Fluxo de caixa" }
+          ] as Array<{ v: Tab; l: string }>
+        ).map((t) => (
+          <button
+            key={t.v}
+            onClick={() => setTab(t.v)}
+            className={`-mb-px border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
+              tab === t.v
+                ? "border-primary text-foreground"
+                : "border-transparent text-muted hover:text-foreground"
+            }`}
+          >
+            {t.l}
+          </button>
+        ))}
+      </div>
+
+      {tab === "fechamento" ? <FechamentoTab /> : <FluxoTab />}
+    </div>
+  );
+}
+
+/* ============================================================
+   ABA 1 — FECHAMENTO (regime de competência)
+   ============================================================ */
 
 type ForecastMetric = "entrada" | "saida" | "net";
 
-export function DashboardView() {
+function FechamentoTab() {
   const monthOpts = buildMonthOptions();
   const [month, setMonth] = useState(currentYearMonth());
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
@@ -23,11 +80,9 @@ export function DashboardView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Filtros do grafico
   const [forecastMetric, setForecastMetric] = useState<ForecastMetric>("net");
   const [forecastMoeda, setForecastMoeda] = useState<Moeda>("BRL");
 
-  // Breakdowns expansiveis
   const [expandedBrlReceber, setExpandedBrlReceber] = useState(false);
   const [expandedBrlPagar, setExpandedBrlPagar] = useState(false);
   const [expandedUsdReceber, setExpandedUsdReceber] = useState(false);
@@ -55,16 +110,13 @@ export function DashboardView() {
   }, [load]);
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-8">
-      <div className="mb-6 flex items-end justify-between">
-        <div>
-          <h4 className="mb-1 text-xs font-semibold uppercase tracking-widest text-primary">Caracol Gerencial</h4>
-          <h1 className="text-2xl font-semibold text-foreground">Fluxo de caixa</h1>
-          <p className="mt-1 text-sm text-muted">
-            Quanto vou receber e pagar por moeda. Pra decidir remessa e provisionar caixa.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+    <>
+      <div className="mb-6 flex items-end justify-between gap-3">
+        <p className="text-sm text-muted">
+          Por <span className="text-foreground">competência</span>: tudo que pertence ao mês de referência,
+          independente de quando o dinheiro entra/sai. Resultado = entradas − saídas.
+        </p>
+        <div className="flex flex-shrink-0 items-center gap-2">
           <select
             value={month}
             onChange={(e) => setMonth(e.target.value)}
@@ -100,7 +152,6 @@ export function DashboardView() {
         </div>
       ) : (
         <>
-          {/* Cards principais */}
           {dashboard && (
             <div className="mb-8 grid gap-4 md:grid-cols-2">
               <MoedaCard
@@ -124,13 +175,14 @@ export function DashboardView() {
             </div>
           )}
 
-          {/* Forecast */}
           {forecast && forecast.months.length > 0 && (
             <div className="rounded-xl border border-border bg-surface">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
                 <div>
-                  <h2 className="text-sm font-semibold text-foreground">Projeção próximos meses</h2>
-                  <p className="text-xs text-muted">Entradas e saídas previstas por mês de referência.</p>
+                  <h2 className="text-sm font-semibold text-foreground">Resultado por mês (competência)</h2>
+                  <p className="text-xs text-muted">
+                    Net = entradas − saídas, por mês de referência. Azul = positivo, vermelho = negativo.
+                  </p>
                 </div>
                 <div className="flex items-center gap-3">
                   <div className="flex items-center gap-1">
@@ -138,7 +190,7 @@ export function DashboardView() {
                       [
                         { v: "entrada", l: "Entrada" },
                         { v: "saida", l: "Saída" },
-                        { v: "net", l: "Net" }
+                        { v: "net", l: "Resultado" }
                       ] as Array<{ v: ForecastMetric; l: string }>
                     ).map((opt) => (
                       <button
@@ -178,7 +230,7 @@ export function DashboardView() {
           )}
         </>
       )}
-    </div>
+    </>
   );
 }
 
@@ -199,6 +251,7 @@ function MoedaCard({
   onToggleReceber: () => void;
   onTogglePagar: () => void;
 }) {
+  const net = data.recebido_mes + data.a_receber - data.pago_mes - data.a_pagar;
   return (
     <div className="rounded-xl border border-border bg-surface p-5">
       <div className="mb-4 flex items-center justify-between">
@@ -207,14 +260,8 @@ function MoedaCard({
       </div>
 
       <div className="space-y-3">
-        {/* Saldo atual (banco — placeholder, viraremos real depois) */}
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-muted">Saldo atual</span>
-          <span className="font-mono text-muted" title="A integrar extrato bancário">—</span>
-        </div>
-
         {/* Realizado (já passou) */}
-        <div className="border-t border-border pt-3 space-y-3">
+        <div className="space-y-3">
           <div className="flex items-center justify-between text-sm">
             <span className="text-muted">Recebido (mês)</span>
             <span className="font-mono text-emerald-300">{formatCurrency(data.recebido_mes, moeda)}</span>
@@ -255,25 +302,21 @@ function MoedaCard({
           )}
         </div>
 
-        {(() => {
-          const saldoAtual = 0; // TODO integrar extrato bancário
-          const saldoEst = saldoAtual + data.recebido_mes + data.a_receber - data.pago_mes - data.a_pagar;
-          return (
-            <div className="border-t border-border pt-3">
-              <div className="flex items-center justify-between">
-                <span className="text-base font-semibold text-foreground">Saldo Est. fim do mês</span>
-                <span
-                  className={`font-mono text-lg font-semibold ${
-                    saldoEst >= 0 ? "text-emerald-300" : "text-danger"
-                  }`}
-                  title="Saldo atual + recebido + a receber − pago − a pagar"
-                >
-                  {formatCurrency(saldoEst, moeda)}
-                </span>
-              </div>
-            </div>
-          );
-        })()}
+        {/* Resultado do mês (competência) */}
+        <div className="border-t border-border pt-3">
+          <div className="flex items-center justify-between">
+            <span className="text-base font-semibold text-foreground">Resultado do mês</span>
+            <span
+              className={`font-mono text-lg font-semibold ${net >= 0 ? "text-sky-300" : "text-danger"}`}
+              title="Recebido + a receber − pago − a pagar (competência)"
+            >
+              {formatCurrency(net, moeda)}
+            </span>
+          </div>
+          <p className="mt-1 text-right text-xs text-muted">
+            {net >= 0 ? "Mês fecha positivo" : "Mês fecha negativo"}
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -326,7 +369,6 @@ function ForecastChart({
   return (
     <div className="overflow-x-auto">
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: "600px" }}>
-        {/* Linha zero */}
         <line
           x1={padL}
           x2={W - padR}
@@ -336,8 +378,6 @@ function ForecastChart({
           strokeOpacity="0.2"
           strokeDasharray="3,3"
         />
-
-        {/* Eixo Y labels */}
         <text x={padL - 8} y={padT + 4} textAnchor="end" fontSize="10" fill="currentColor" fillOpacity="0.5">
           {formatTickShort(max, moeda)}
         </text>
@@ -350,7 +390,6 @@ function ForecastChart({
           </text>
         )}
 
-        {/* Barras */}
         {months.map((m, i) => {
           const v = getValue(m);
           const xCenter = padL + i * slot + slot / 2;
@@ -359,11 +398,15 @@ function ForecastChart({
           const top = isPositive ? padT + innerH - ((v - min) / range) * innerH : zeroY;
           const bottom = isPositive ? zeroY : padT + innerH - ((v - min) / range) * innerH;
           const h = Math.abs(bottom - top);
-          const color = metric === "net"
-            ? isPositive ? "rgb(110, 231, 183)" : "rgb(248, 113, 113)"
-            : metric === "entrada"
-            ? "rgb(110, 231, 183)"
-            : "rgb(248, 113, 113)";
+          // net: azul positivo / vermelho negativo
+          const color =
+            metric === "net"
+              ? isPositive
+                ? "rgb(125, 211, 252)"
+                : "rgb(248, 113, 113)"
+              : metric === "entrada"
+              ? "rgb(110, 231, 183)"
+              : "rgb(248, 113, 113)";
 
           return (
             <g key={m.month}>
@@ -378,14 +421,7 @@ function ForecastChart({
               >
                 {formatTickShort(v, moeda)}
               </text>
-              <text
-                x={xCenter}
-                y={H - 10}
-                textAnchor="middle"
-                fontSize="10"
-                fill="currentColor"
-                fillOpacity="0.5"
-              >
+              <text x={xCenter} y={H - 10} textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.5">
                 {shortMonth(m.month)}
               </text>
             </g>
@@ -395,6 +431,238 @@ function ForecastChart({
     </div>
   );
 }
+
+/* ============================================================
+   ABA 2 — FLUXO DE CAIXA (regime de caixa, por vencimento)
+   ============================================================ */
+
+function FluxoTab() {
+  const [data, setData] = useState<CashflowResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [moeda, setMoeda] = useState<Moeda>("BRL");
+  const [overdueOpen, setOverdueOpen] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const r = await apiFetch(`/gerencial/cashflow?months_ahead=6`);
+      setData(r as CashflowResponse);
+    } catch (err: any) {
+      setError(err?.message || "Falha ao carregar fluxo de caixa.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const ov = data?.overdue;
+  const overduePagar = moeda === "BRL" ? ov?.a_pagar_brl ?? 0 : ov?.a_pagar_usd ?? 0;
+  const overdueReceber = moeda === "BRL" ? ov?.a_receber_brl ?? 0 : ov?.a_receber_usd ?? 0;
+  const overdueItems = (ov?.items ?? []).filter((it) => it.moeda === moeda);
+  const itensPagar = overdueItems.filter((it) => it.tipo === "pagar");
+  const itensReceber = overdueItems.filter((it) => it.tipo === "receber");
+  const hasOverdue = overduePagar !== 0 || overdueReceber !== 0;
+
+  return (
+    <>
+      <div className="mb-6 flex items-end justify-between gap-3">
+        <p className="text-sm text-muted">
+          Por <span className="text-foreground">vencimento</span> (caixa real): quando o dinheiro de fato entra/sai.
+          Diferente do Fechamento, que é por competência.
+        </p>
+        <div className="flex flex-shrink-0 items-center gap-2">
+          <div className="flex items-center gap-1">
+            {(["BRL", "USD"] as Moeda[]).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMoeda(m)}
+                className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                  moeda === m ? "bg-primary text-black" : "bg-background text-muted hover:text-foreground"
+                }`}
+              >
+                {m === "BRL" ? "R$" : "US$"}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={load}
+            disabled={loading}
+            className="rounded-lg border border-border bg-surface p-2 text-muted hover:bg-surface/80 disabled:opacity-50"
+            title="Atualizar"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-danger/20 bg-danger/10 p-3">
+          <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-danger" />
+          <div className="text-sm text-danger">
+            <p>{error}</p>
+            <p className="mt-1 text-xs text-danger/70">
+              O endpoint de fluxo de caixa pode ainda não estar disponível no backend.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {loading && !data ? (
+        <div className="flex justify-center py-12">
+          <Loader2 className="h-6 w-6 animate-spin text-primary" />
+        </div>
+      ) : data ? (
+        <>
+          {/* Card "Em atraso" em destaque */}
+          <div
+            className={`mb-6 rounded-xl border ${
+              hasOverdue ? "border-danger/40 bg-danger/10" : "border-border bg-surface"
+            }`}
+          >
+            <button
+              onClick={() => setOverdueOpen((o) => !o)}
+              disabled={overdueItems.length === 0}
+              className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left disabled:cursor-default"
+            >
+              <div className="flex items-center gap-2">
+                <AlertTriangle className={`h-5 w-5 ${hasOverdue ? "text-danger" : "text-muted"}`} />
+                <div>
+                  <h2 className={`text-sm font-semibold ${hasOverdue ? "text-danger" : "text-foreground"}`}>
+                    Em atraso (vencido)
+                  </h2>
+                  <p className="text-xs text-muted">Títulos com vencimento anterior a hoje ({data.today}).</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-6">
+                <div className="text-right">
+                  <p className="text-xs text-muted">A pagar</p>
+                  <p className="font-mono text-sm font-semibold text-danger">{formatCurrency(overduePagar, moeda)}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-muted">A receber</p>
+                  <p className="font-mono text-sm font-semibold text-emerald-300">
+                    {formatCurrency(overdueReceber, moeda)}
+                  </p>
+                </div>
+                {overdueItems.length > 0 &&
+                  (overdueOpen ? (
+                    <ChevronDown className="h-4 w-4 text-muted" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4 text-muted" />
+                  ))}
+              </div>
+            </button>
+
+            {overdueOpen && overdueItems.length > 0 && (
+              <div className="grid gap-4 border-t border-danger/20 px-5 py-4 md:grid-cols-2">
+                <OverdueColumn title="A pagar" items={itensPagar} tipo="pagar" moeda={moeda} />
+                <OverdueColumn title="A receber" items={itensReceber} tipo="receber" moeda={moeda} />
+              </div>
+            )}
+          </div>
+
+          {/* Timeline por vencimento */}
+          {data.months.length > 0 && (
+            <div className="rounded-xl border border-border bg-surface">
+              <div className="border-b border-border px-5 py-4">
+                <h2 className="text-sm font-semibold text-foreground">A pagar / a receber por vencimento</h2>
+                <p className="text-xs text-muted">
+                  Próximos meses pela data de vencimento. Net de caixa = a receber − a pagar.
+                </p>
+              </div>
+              <div className="divide-y divide-border">
+                {data.months.map((m) => (
+                  <CashflowMonthRow key={m.month} month={m} moeda={moeda} />
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      ) : null}
+    </>
+  );
+}
+
+function OverdueColumn({
+  title,
+  items,
+  tipo,
+  moeda
+}: {
+  title: string;
+  items: CashflowItem[];
+  tipo: "pagar" | "receber";
+  moeda: Moeda;
+}) {
+  const accent = tipo === "pagar" ? "text-danger" : "text-emerald-300";
+  return (
+    <div>
+      <h3 className={`mb-2 text-xs font-semibold uppercase tracking-wide ${accent}`}>{title}</h3>
+      {items.length === 0 ? (
+        <p className="text-xs text-muted">Nada vencido.</p>
+      ) : (
+        <ul className="space-y-2">
+          {items.map((it) => (
+            <li key={`${it.source}-${it.id}`} className="rounded-lg border border-border bg-background px-3 py-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm text-foreground">{it.descricao}</p>
+                  <p className="text-xs text-muted">
+                    Venceu {it.due_date} · {it.dias_atraso} dia{it.dias_atraso === 1 ? "" : "s"} de atraso
+                    {it.previsto && (
+                      <span className="ml-1.5 rounded bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
+                        previsto
+                      </span>
+                    )}
+                  </p>
+                </div>
+                <span className={`flex-shrink-0 font-mono text-sm ${accent}`}>
+                  {formatCurrency(it.amount, moeda)}
+                </span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function CashflowMonthRow({ month, moeda }: { month: CashflowMonth; moeda: Moeda }) {
+  const pagar = moeda === "BRL" ? month.a_pagar_brl : month.a_pagar_usd;
+  const receber = moeda === "BRL" ? month.a_receber_brl : month.a_receber_usd;
+  const net = receber - pagar;
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+      <span className="w-24 text-sm font-medium text-foreground">{shortMonth(month.month)}</span>
+      <div className="flex flex-1 flex-wrap items-center justify-end gap-x-8 gap-y-1">
+        <div className="text-right">
+          <span className="text-xs text-muted">A receber </span>
+          <span className="font-mono text-sm text-emerald-300">{formatCurrency(receber, moeda)}</span>
+        </div>
+        <div className="text-right">
+          <span className="text-xs text-muted">A pagar </span>
+          <span className="font-mono text-sm text-danger">{formatCurrency(pagar, moeda)}</span>
+        </div>
+        <div className="w-32 text-right">
+          <span className="text-xs text-muted">Net </span>
+          <span className={`font-mono text-sm font-semibold ${net >= 0 ? "text-sky-300" : "text-danger"}`}>
+            {formatCurrency(net, moeda)}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   Helpers compartilhados
+   ============================================================ */
 
 function formatTickShort(value: number, moeda: Moeda): string {
   const prefix = moeda === "USD" ? "$" : "R$";

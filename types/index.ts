@@ -82,3 +82,42 @@ export interface ForecastMonth {
 export interface ForecastResponse {
   months: ForecastMonth[];
 }
+
+// ----- Cashflow / Fluxo de caixa por vencimento (Etapa 4.3) -----
+
+export type CashflowTipo = "pagar" | "receber";
+export type CashflowSource = string; // nf_invoices | nf_receivables | campanhas_fechamento_mensal | gerencial_transactions
+
+export interface CashflowItem {
+  source: CashflowSource;
+  id: string;
+  descricao: string;
+  tipo: CashflowTipo;
+  moeda: Moeda;
+  amount: number;
+  due_date: string; // YYYY-MM-DD
+  dias_atraso: number;
+  previsto: boolean;
+}
+
+export interface CashflowOverdue {
+  a_pagar_brl: number;
+  a_pagar_usd: number;
+  a_receber_brl: number;
+  a_receber_usd: number;
+  items: CashflowItem[];
+}
+
+export interface CashflowMonth {
+  month: string; // YYYY-MM
+  a_pagar_brl: number;
+  a_pagar_usd: number;
+  a_receber_brl: number;
+  a_receber_usd: number;
+}
+
+export interface CashflowResponse {
+  today: string; // YYYY-MM-DD
+  overdue: CashflowOverdue;
+  months: CashflowMonth[];
+}
