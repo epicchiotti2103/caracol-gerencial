@@ -1034,11 +1034,11 @@ function FluxoTab() {
     const pagoReal = moeda === "BRL" ? m.pago_brl ?? 0 : m.pago_usd ?? 0;
     const remessaIn = moeda === "USD" ? m.remessa_usd_in ?? 0 : 0; // US$ que chegou
     const remessaOut = moeda === "BRL" ? m.remessa_brl_out ?? 0 : 0; // R$ que saiu
-    // Recebido (entrou) e Enviado (saiu), já com a remessa embutida
+    // Recebido (entrou) e Pago (saiu), já com a remessa embutida
     const recebido = recebidoReal + remessaIn;
-    const enviado = pagoReal + remessaOut;
-    // movimento = a receber − a pagar + recebido − enviado
-    const movimento = receber - pagar + recebido - enviado;
+    const pago = pagoReal + remessaOut;
+    // movimento = a receber − a pagar + recebido − pago
+    const movimento = receber - pagar + recebido - pago;
     running = running != null ? running + movimento : null;
     const isCurrent = i === 0 || (data?.today != null && m.month === data.today.slice(0, 7));
     return {
@@ -1046,8 +1046,11 @@ function FluxoTab() {
       receber,
       pagar,
       recebido,
-      enviado,
-      temRemessa: remessaIn !== 0 || remessaOut !== 0,
+      recebidoReal,
+      remessaIn,
+      pago,
+      pagoReal,
+      remessaOut,
       saldoProjetado: running,
       overduePagar: isCurrent ? overduePagar : 0
     };
@@ -1179,7 +1182,7 @@ function FluxoTab() {
                 <span className="text-right">A receber</span>
                 <span className="text-right">A pagar</span>
                 <span className="text-right">Recebido</span>
-                <span className="text-right">Enviado</span>
+                <span className="text-right">Pago</span>
                 <span className="text-right">Saldo proj.</span>
               </div>
               <div className="divide-y divide-border">
@@ -1191,8 +1194,11 @@ function FluxoTab() {
                     receber={r.receber}
                     pagar={r.pagar}
                     recebido={r.recebido}
-                    enviado={r.enviado}
-                    temRemessa={r.temRemessa}
+                    recebidoReal={r.recebidoReal}
+                    remessaIn={r.remessaIn}
+                    pago={r.pago}
+                    pagoReal={r.pagoReal}
+                    remessaOut={r.remessaOut}
                     saldoProjetado={r.saldoProjetado}
                     overduePagar={r.overduePagar}
                   />
@@ -1259,9 +1265,35 @@ function OverdueColumn({
 // Grade fixa da projeção de caixa: mês + 5 colunas numéricas alinhadas
 const CASHFLOW_GRID = "grid grid-cols-[3.5rem_repeat(5,minmax(0,1fr))] items-start gap-x-4 px-5";
 
-function CashflowCell({ value, moeda, tone }: { value: number; moeda: Moeda; tone: string }) {
+function CashflowCell({
+  value,
+  moeda,
+  tone,
+  title
+}: {
+  value: number;
+  moeda: Moeda;
+  tone: string;
+  title?: string;
+}) {
   if (value === 0) return <span className="text-right font-mono text-sm text-muted">—</span>;
-  return <span className={`text-right font-mono text-sm ${tone}`}>{formatCurrency(value, moeda)}</span>;
+  return (
+    <span
+      title={title}
+      className={`text-right font-mono text-sm ${tone} ${title ? "cursor-help underline decoration-dotted decoration-muted/40 underline-offset-4" : ""}`}
+    >
+      {formatCurrency(value, moeda)}
+    </span>
+  );
+}
+
+// Tooltip "Pagamentos X + Remessa Y" (só os componentes não-zero)
+function breakdownTitle(label: string, base: number, remessa: number, moeda: Moeda): string | undefined {
+  if (remessa === 0) return undefined; // sem remessa, não precisa quebrar
+  const parts: string[] = [];
+  if (base !== 0) parts.push(`${label} ${formatCurrency(base, moeda)}`);
+  parts.push(`Remessa ${formatCurrency(remessa, moeda)}`);
+  return parts.join("  +  ");
 }
 
 function CashflowMonthRow({
@@ -1270,8 +1302,11 @@ function CashflowMonthRow({
   receber,
   pagar,
   recebido,
-  enviado,
-  temRemessa,
+  recebidoReal,
+  remessaIn,
+  pago,
+  pagoReal,
+  remessaOut,
   saldoProjetado,
   overduePagar = 0
 }: {
@@ -1279,9 +1314,12 @@ function CashflowMonthRow({
   moeda: Moeda;
   receber: number;
   pagar: number;
-  recebido: number; // entrou no caixa (realizado + remessa US$)
-  enviado: number; // saiu do caixa (realizado + remessa R$)
-  temRemessa: boolean;
+  recebido: number; // entrou no caixa (recebimentos + remessa US$)
+  recebidoReal: number;
+  remessaIn: number;
+  pago: number; // saiu do caixa (pagamentos + remessa R$)
+  pagoReal: number;
+  remessaOut: number;
   saldoProjetado: number | null;
   overduePagar?: number;
 }) {
@@ -1296,14 +1334,18 @@ function CashflowMonthRow({
           <span className="text-[10px] text-muted">inclui {formatCurrency(overduePagar, moeda)} em atraso</span>
         )}
       </div>
-      <div className="flex flex-col items-end">
-        <CashflowCell value={recebido} moeda={moeda} tone="text-emerald-300" />
-        {temRemessa && moeda === "USD" && <span className="text-[10px] text-muted">c/ remessa</span>}
-      </div>
-      <div className="flex flex-col items-end">
-        <CashflowCell value={enviado} moeda={moeda} tone="text-danger" />
-        {temRemessa && moeda === "BRL" && <span className="text-[10px] text-muted">c/ remessa</span>}
-      </div>
+      <CashflowCell
+        value={recebido}
+        moeda={moeda}
+        tone="text-emerald-300"
+        title={breakdownTitle("Recebimentos", recebidoReal, remessaIn, moeda)}
+      />
+      <CashflowCell
+        value={pago}
+        moeda={moeda}
+        tone="text-danger"
+        title={breakdownTitle("Pagamentos", pagoReal, remessaOut, moeda)}
+      />
       {saldoProjetado != null ? (
         <span
           className={`text-right font-mono text-sm font-semibold ${
