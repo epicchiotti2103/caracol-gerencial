@@ -15,12 +15,20 @@ import type {
   DashboardResponse,
   ForecastResponse,
   ForecastMonth,
+  DashboardItem,
+  DashboardItemsResponse,
   Moeda,
   CashflowResponse,
   CashflowItem,
   CashflowMonth
 } from "@/types";
-import { formatCurrency, buildMonthOptions, currentYearMonth } from "@/lib/format";
+import {
+  formatCurrency,
+  buildMonthOptions,
+  buildYearOptions,
+  currentYearMonth,
+  currentYear
+} from "@/lib/format";
 
 type Tab = "fechamento" | "fluxo";
 
@@ -71,17 +79,54 @@ export function DashboardView() {
    ============================================================ */
 
 type ForecastMetric = "entrada" | "saida" | "net";
+type ViewMode = "mes" | "ano";
 
 function FechamentoTab() {
+  const [viewMode, setViewMode] = useState<ViewMode>("mes");
+
+  return (
+    <>
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <p className="max-w-xl text-sm text-muted">
+          Por <span className="text-foreground">competência</span>: tudo que pertence ao período de referência,
+          independente de quando o dinheiro entra/sai. Resultado = entradas − saídas.
+        </p>
+        <div className="flex items-center gap-1 rounded-lg border border-border bg-background p-1">
+          {(
+            [
+              { v: "mes", l: "Mês" },
+              { v: "ano", l: "Ano" }
+            ] as Array<{ v: ViewMode; l: string }>
+          ).map((opt) => (
+            <button
+              key={opt.v}
+              onClick={() => setViewMode(opt.v)}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                viewMode === opt.v ? "bg-primary text-black" : "text-muted hover:text-foreground"
+              }`}
+            >
+              {opt.l}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {viewMode === "mes" ? <FechamentoMes /> : <FechamentoAno />}
+    </>
+  );
+}
+
+/* ---- Fechamento: visão MÊS (cards + drill-down de títulos) ---- */
+
+function FechamentoMes() {
   const monthOpts = buildMonthOptions();
   const [month, setMonth] = useState(currentYearMonth());
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
-  const [forecast, setForecast] = useState<ForecastResponse | null>(null);
+  const [items, setItems] = useState<DashboardItem[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const [forecastMetric, setForecastMetric] = useState<ForecastMetric>("net");
-  const [forecastMoeda, setForecastMoeda] = useState<Moeda>("BRL");
+  const [detalheMoeda, setDetalheMoeda] = useState<Moeda>("BRL");
 
   const [expandedBrlReceber, setExpandedBrlReceber] = useState(false);
   const [expandedBrlPagar, setExpandedBrlPagar] = useState(false);
@@ -92,12 +137,12 @@ function FechamentoTab() {
     setLoading(true);
     setError("");
     try {
-      const [d, f] = await Promise.all([
+      const [d, it] = await Promise.all([
         apiFetch(`/gerencial/dashboard?month=${month}`),
-        apiFetch(`/gerencial/forecast?months_ahead=6`)
+        apiFetch(`/gerencial/dashboard/items?month=${month}`)
       ]);
       setDashboard(d as DashboardResponse);
-      setForecast(f as ForecastResponse);
+      setItems((it as DashboardItemsResponse).items);
     } catch (err: any) {
       setError(err?.message || "Falha ao carregar.");
     } finally {
@@ -111,32 +156,26 @@ function FechamentoTab() {
 
   return (
     <>
-      <div className="mb-6 flex items-end justify-between gap-3">
-        <p className="text-sm text-muted">
-          Por <span className="text-foreground">competência</span>: tudo que pertence ao mês de referência,
-          independente de quando o dinheiro entra/sai. Resultado = entradas − saídas.
-        </p>
-        <div className="flex flex-shrink-0 items-center gap-2">
-          <select
-            value={month}
-            onChange={(e) => setMonth(e.target.value)}
-            className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary/50"
-          >
-            {monthOpts.map((m) => (
-              <option key={m.value} value={m.value}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={load}
-            disabled={loading}
-            className="rounded-lg border border-border bg-surface p-2 text-muted hover:bg-surface/80 disabled:opacity-50"
-            title="Atualizar"
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-          </button>
-        </div>
+      <div className="mb-6 flex items-center justify-end gap-2">
+        <select
+          value={month}
+          onChange={(e) => setMonth(e.target.value)}
+          className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary/50"
+        >
+          {monthOpts.map((m) => (
+            <option key={m.value} value={m.value}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={load}
+          disabled={loading}
+          className="rounded-lg border border-border bg-surface p-2 text-muted hover:bg-surface/80 disabled:opacity-50"
+          title="Atualizar"
+        >
+          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+        </button>
       </div>
 
       {error && (
@@ -175,62 +214,192 @@ function FechamentoTab() {
             </div>
           )}
 
-          {forecast && forecast.months.length > 0 && (
-            <div className="rounded-xl border border-border bg-surface">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
-                <div>
-                  <h2 className="text-sm font-semibold text-foreground">Resultado por mês (competência)</h2>
-                  <p className="text-xs text-muted">
-                    Net = entradas − saídas, por mês de referência. Azul = positivo, vermelho = negativo.
-                  </p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1">
-                    {(
-                      [
-                        { v: "entrada", l: "Entrada" },
-                        { v: "saida", l: "Saída" },
-                        { v: "net", l: "Resultado" }
-                      ] as Array<{ v: ForecastMetric; l: string }>
-                    ).map((opt) => (
-                      <button
-                        key={opt.v}
-                        onClick={() => setForecastMetric(opt.v)}
-                        className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                          forecastMetric === opt.v
-                            ? "bg-primary text-black"
-                            : "bg-background text-muted hover:text-foreground"
-                        }`}
-                      >
-                        {opt.l}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-1">
-                    {(["BRL", "USD"] as Moeda[]).map((m) => (
-                      <button
-                        key={m}
-                        onClick={() => setForecastMoeda(m)}
-                        className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                          forecastMoeda === m
-                            ? "bg-primary text-black"
-                            : "bg-background text-muted hover:text-foreground"
-                        }`}
-                      >
-                        {m === "BRL" ? "R$" : "US$"}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              <div className="p-5">
-                <ForecastChart months={forecast.months} metric={forecastMetric} moeda={forecastMoeda} />
-              </div>
-            </div>
+          {items && (
+            <MonthItemsBreakdown items={items} moeda={detalheMoeda} onMoedaChange={setDetalheMoeda} />
           )}
         </>
       )}
     </>
+  );
+}
+
+/* ---- Fechamento: visão ANO (resumo anual + gráfico 12 meses) ---- */
+
+function FechamentoAno() {
+  const yearOpts = buildYearOptions();
+  const [year, setYear] = useState(currentYear());
+  const [forecast, setForecast] = useState<ForecastResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const [forecastMetric, setForecastMetric] = useState<ForecastMetric>("net");
+  const [forecastMoeda, setForecastMoeda] = useState<Moeda>("BRL");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const f = await apiFetch(`/gerencial/forecast?start=${year}-01&months_ahead=11`);
+      setForecast(f as ForecastResponse);
+    } catch (err: any) {
+      setError(err?.message || "Falha ao carregar.");
+    } finally {
+      setLoading(false);
+    }
+  }, [year]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return (
+    <>
+      <div className="mb-6 flex items-center justify-end gap-2">
+        <select
+          value={year}
+          onChange={(e) => setYear(Number(e.target.value))}
+          className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary/50"
+        >
+          {yearOpts.map((y) => (
+            <option key={y} value={y}>
+              {y}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={load}
+          disabled={loading}
+          className="rounded-lg border border-border bg-surface p-2 text-muted hover:bg-surface/80 disabled:opacity-50"
+          title="Atualizar"
+        >
+          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+        </button>
+      </div>
+
+      {error && (
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-danger/20 bg-danger/10 p-3">
+          <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-danger" />
+          <p className="text-sm text-danger">{error}</p>
+        </div>
+      )}
+
+      {loading && !forecast ? (
+        <div className="flex justify-center py-12">
+          <Loader2 className="h-6 w-6 animate-spin text-primary" />
+        </div>
+      ) : (
+        forecast && (
+          <>
+            <div className="mb-8 grid gap-4 md:grid-cols-2">
+              <AnnualSummaryCard title="Caracol BR (R$)" moeda="BRL" months={forecast.months} year={year} />
+              <AnnualSummaryCard title="Caracol LLC (US$)" moeda="USD" months={forecast.months} year={year} />
+            </div>
+
+            {forecast.months.length > 0 && (
+              <div className="rounded-xl border border-border bg-surface">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+                  <div>
+                    <h2 className="text-sm font-semibold text-foreground">Resultado por mês ({year})</h2>
+                    <p className="text-xs text-muted">
+                      Net = entradas − saídas, por mês de referência. Azul = positivo, vermelho = negativo.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1">
+                      {(
+                        [
+                          { v: "entrada", l: "Entrada" },
+                          { v: "saida", l: "Saída" },
+                          { v: "net", l: "Resultado" }
+                        ] as Array<{ v: ForecastMetric; l: string }>
+                      ).map((opt) => (
+                        <button
+                          key={opt.v}
+                          onClick={() => setForecastMetric(opt.v)}
+                          className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                            forecastMetric === opt.v
+                              ? "bg-primary text-black"
+                              : "bg-background text-muted hover:text-foreground"
+                          }`}
+                        >
+                          {opt.l}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {(["BRL", "USD"] as Moeda[]).map((m) => (
+                        <button
+                          key={m}
+                          onClick={() => setForecastMoeda(m)}
+                          className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                            forecastMoeda === m
+                              ? "bg-primary text-black"
+                              : "bg-background text-muted hover:text-foreground"
+                          }`}
+                        >
+                          {m === "BRL" ? "R$" : "US$"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="p-5">
+                  <ForecastChart months={forecast.months} metric={forecastMetric} moeda={forecastMoeda} />
+                </div>
+              </div>
+            )}
+          </>
+        )
+      )}
+    </>
+  );
+}
+
+function AnnualSummaryCard({
+  title,
+  moeda,
+  months,
+  year
+}: {
+  title: string;
+  moeda: Moeda;
+  months: ForecastMonth[];
+  year: number;
+}) {
+  const entrada = months.reduce((s, m) => s + (moeda === "BRL" ? m.entrada_brl : m.entrada_usd), 0);
+  const saida = months.reduce((s, m) => s + (moeda === "BRL" ? m.saida_brl : m.saida_usd), 0);
+  const net = entrada - saida;
+  return (
+    <div className="rounded-xl border border-border bg-surface p-5">
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        <Wallet className="h-4 w-4 text-muted" />
+      </div>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted">Entradas ({year})</span>
+          <span className="font-mono text-emerald-300">{formatCurrency(entrada, moeda)}</span>
+        </div>
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted">Saídas ({year})</span>
+          <span className="font-mono text-danger">{formatCurrency(saida, moeda)}</span>
+        </div>
+        <div className="border-t border-border pt-3">
+          <div className="flex items-center justify-between">
+            <span className="text-base font-semibold text-foreground">Resultado do ano</span>
+            <span
+              className={`font-mono text-lg font-semibold ${net >= 0 ? "text-sky-300" : "text-danger"}`}
+              title="Entradas − saídas no ano (competência)"
+            >
+              {formatCurrency(net, moeda)}
+            </span>
+          </div>
+          <p className="mt-1 text-right text-xs text-muted">
+            {net >= 0 ? "Ano fecha positivo" : "Ano fecha negativo"}
+          </p>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -327,6 +496,139 @@ function BreakdownRow({ label, value, moeda }: { label: string; value: number; m
     <div className="flex items-center justify-between">
       <span className="text-muted">{label}</span>
       <span className="font-mono text-muted">{formatCurrency(value, moeda)}</span>
+    </div>
+  );
+}
+
+function sourceLabel(source: string): string {
+  switch (source) {
+    case "nf_invoices":
+      return "NF a pagar";
+    case "nf_receivables":
+      return "NF a receber";
+    case "fechamento":
+      return "Fechamento";
+    case "gerencial_transactions":
+      return "Avulso";
+    default:
+      return source;
+  }
+}
+
+/* Drill-down: quais títulos compõem o mês de competência */
+function MonthItemsBreakdown({
+  items,
+  moeda,
+  onMoedaChange
+}: {
+  items: DashboardItem[];
+  moeda: Moeda;
+  onMoedaChange: (m: Moeda) => void;
+}) {
+  const ofMoeda = items.filter((it) => it.moeda === moeda);
+  const groups: Array<{ key: string; title: string; accent: string; list: DashboardItem[] }> = [
+    {
+      key: "recebido",
+      title: "Recebido (realizado)",
+      accent: "text-emerald-300",
+      list: ofMoeda.filter((it) => it.tipo === "receber" && it.status === "realizado")
+    },
+    {
+      key: "a_receber",
+      title: "A receber (pendente)",
+      accent: "text-emerald-300",
+      list: ofMoeda.filter((it) => it.tipo === "receber" && it.status === "pendente")
+    },
+    {
+      key: "pago",
+      title: "Pago (realizado)",
+      accent: "text-danger",
+      list: ofMoeda.filter((it) => it.tipo === "pagar" && it.status === "realizado")
+    },
+    {
+      key: "a_pagar",
+      title: "A pagar (pendente)",
+      accent: "text-danger",
+      list: ofMoeda.filter((it) => it.tipo === "pagar" && it.status === "pendente")
+    }
+  ];
+
+  return (
+    <div className="rounded-xl border border-border bg-surface">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">Detalhamento do mês</h2>
+          <p className="text-xs text-muted">Quais títulos compõem cada valor do mês de referência.</p>
+        </div>
+        <div className="flex items-center gap-1">
+          {(["BRL", "USD"] as Moeda[]).map((m) => (
+            <button
+              key={m}
+              onClick={() => onMoedaChange(m)}
+              className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                moeda === m ? "bg-primary text-black" : "bg-background text-muted hover:text-foreground"
+              }`}
+            >
+              {m === "BRL" ? "R$" : "US$"}
+            </button>
+          ))}
+        </div>
+      </div>
+      {ofMoeda.length === 0 ? (
+        <p className="px-5 py-8 text-center text-sm text-muted">
+          Nenhum título em {moeda === "BRL" ? "R$" : "US$"} neste mês.
+        </p>
+      ) : (
+        <div className="grid gap-x-6 gap-y-6 p-5 md:grid-cols-2">
+          {groups.map((g) => (
+            <ItemGroup key={g.key} title={g.title} accent={g.accent} items={g.list} moeda={moeda} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ItemGroup({
+  title,
+  accent,
+  items,
+  moeda
+}: {
+  title: string;
+  accent: string;
+  items: DashboardItem[];
+  moeda: Moeda;
+}) {
+  const total = items.reduce((s, it) => s + it.amount, 0);
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className={`text-xs font-semibold uppercase tracking-wide ${accent}`}>{title}</h3>
+        <span className={`font-mono text-xs ${accent}`}>{formatCurrency(total, moeda)}</span>
+      </div>
+      {items.length === 0 ? (
+        <p className="text-xs text-muted">Nenhum título.</p>
+      ) : (
+        <ul className="space-y-2">
+          {items.map((it) => (
+            <li key={`${it.source}-${it.id}`} className="rounded-lg border border-border bg-background px-3 py-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm text-foreground">{it.descricao}</p>
+                  <p className="text-xs text-muted">
+                    {sourceLabel(it.source)}
+                    {it.due_date && <span> · vence {it.due_date}</span>}
+                  </p>
+                </div>
+                <span className={`flex-shrink-0 font-mono text-sm ${accent}`}>
+                  {formatCurrency(it.amount, moeda)}
+                </span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

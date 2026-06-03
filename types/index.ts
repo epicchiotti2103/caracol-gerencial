@@ -83,6 +83,26 @@ export interface ForecastResponse {
   months: ForecastMonth[];
 }
 
+// Drill-down de competência (quais títulos compõem o mês)
+export type DashboardItemTipo = "receber" | "pagar";
+export type DashboardItemStatus = "realizado" | "pendente";
+
+export interface DashboardItem {
+  source: string; // nf_invoices | nf_receivables | fechamento | gerencial_transactions
+  id: string;
+  descricao: string;
+  tipo: DashboardItemTipo;
+  status: DashboardItemStatus;
+  moeda: Moeda;
+  amount: number;
+  due_date?: string | null; // YYYY-MM-DD
+}
+
+export interface DashboardItemsResponse {
+  month: string; // YYYY-MM
+  items: DashboardItem[];
+}
+
 // ----- Cashflow / Fluxo de caixa por vencimento (Etapa 4.3) -----
 
 export type CashflowTipo = "pagar" | "receber";

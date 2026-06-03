@@ -62,3 +62,17 @@ export function buildMonthOptions(): { value: string; label: string }[] {
   }
   return out;
 }
+
+export function currentYear(): number {
+  return new Date().getFullYear();
+}
+
+// Lista de anos pra dropdown (5 atras ate 1 a frente), mais recente primeiro
+export function buildYearOptions(): number[] {
+  const now = new Date().getFullYear();
+  const out: number[] = [];
+  for (let y = now + 1; y >= now - 5; y--) {
+    out.push(y);
+  }
+  return out;
+}
