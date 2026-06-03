@@ -8,7 +8,11 @@ import {
   AlertTriangle,
   Loader2,
   ChevronDown,
-  ChevronRight
+  ChevronRight,
+  ArrowLeftRight,
+  Check,
+  Plus,
+  Trash2
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import type {
@@ -20,14 +24,22 @@ import type {
   Moeda,
   CashflowResponse,
   CashflowItem,
-  CashflowMonth
+  CashflowMonth,
+  FxRate,
+  FxRatesResponse,
+  OpeningBalance,
+  Remittance,
+  RemittancesResponse,
+  ReconciliationResponse
 } from "@/types";
 import {
   formatCurrency,
   buildMonthOptions,
   buildYearOptions,
   currentYearMonth,
-  currentYear
+  currentYear,
+  parseNumberPtBr,
+  formatMonthLabel
 } from "@/lib/format";
 
 type Tab = "fechamento" | "fluxo";
@@ -79,6 +91,7 @@ export function DashboardView() {
    ============================================================ */
 
 type ForecastMetric = "entrada" | "saida" | "net";
+type ChartBase = Moeda | "CONS";
 type ViewMode = "mes" | "ano";
 
 function FechamentoTab() {
@@ -123,6 +136,7 @@ function FechamentoMes() {
   const [month, setMonth] = useState(currentYearMonth());
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [items, setItems] = useState<DashboardItem[] | null>(null);
+  const [fxRate, setFxRate] = useState<FxRate | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -143,6 +157,13 @@ function FechamentoMes() {
       ]);
       setDashboard(d as DashboardResponse);
       setItems((it as DashboardItemsResponse).items);
+      // Tolerante: se a tabela de cotação ainda não existe, segue sem consolidar
+      try {
+        const fx = await apiFetch(`/gerencial/fx-rates?start=${month}&months_ahead=0`);
+        setFxRate((fx as FxRatesResponse).rates[0] ?? null);
+      } catch {
+        setFxRate(null);
+      }
     } catch (err: any) {
       setError(err?.message || "Falha ao carregar.");
     } finally {
@@ -214,6 +235,18 @@ function FechamentoMes() {
             </div>
           )}
 
+          {dashboard && (
+            <div className="mb-8">
+              <ConsolidatedMonthCard
+                month={month}
+                brlNet={netOf(dashboard.brl)}
+                usdNet={netOf(dashboard.usd)}
+                fxRate={fxRate}
+                onRateSaved={load}
+              />
+            </div>
+          )}
+
           {items && (
             <MonthItemsBreakdown items={items} moeda={detalheMoeda} onMoedaChange={setDetalheMoeda} />
           )}
@@ -229,11 +262,12 @@ function FechamentoAno() {
   const yearOpts = buildYearOptions();
   const [year, setYear] = useState(currentYear());
   const [forecast, setForecast] = useState<ForecastResponse | null>(null);
+  const [rates, setRates] = useState<Record<string, number | null>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const [forecastMetric, setForecastMetric] = useState<ForecastMetric>("net");
-  const [forecastMoeda, setForecastMoeda] = useState<Moeda>("BRL");
+  const [forecastMoeda, setForecastMoeda] = useState<ChartBase>("BRL");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -241,6 +275,15 @@ function FechamentoAno() {
     try {
       const f = await apiFetch(`/gerencial/forecast?start=${year}-01&months_ahead=11`);
       setForecast(f as ForecastResponse);
+      // Tolerante: sem tabela de cotação, mostra só BRL/USD separados
+      try {
+        const fx = await apiFetch(`/gerencial/fx-rates?start=${year}-01&months_ahead=11`);
+        const map: Record<string, number | null> = {};
+        for (const r of (fx as FxRatesResponse).rates) map[r.month] = r.usd_brl;
+        setRates(map);
+      } catch {
+        setRates({});
+      }
     } catch (err: any) {
       setError(err?.message || "Falha ao carregar.");
     } finally {
@@ -290,9 +333,12 @@ function FechamentoAno() {
       ) : (
         forecast && (
           <>
-            <div className="mb-8 grid gap-4 md:grid-cols-2">
+            <div className="mb-4 grid gap-4 md:grid-cols-2">
               <AnnualSummaryCard title="Caracol BR (R$)" moeda="BRL" months={forecast.months} year={year} />
               <AnnualSummaryCard title="Caracol LLC (US$)" moeda="USD" months={forecast.months} year={year} />
+            </div>
+            <div className="mb-8">
+              <AnnualConsolidatedCard months={forecast.months} rates={rates} year={year} />
             </div>
 
             {forecast.months.length > 0 && (
@@ -327,24 +373,35 @@ function FechamentoAno() {
                       ))}
                     </div>
                     <div className="flex items-center gap-1">
-                      {(["BRL", "USD"] as Moeda[]).map((m) => (
+                      {(
+                        [
+                          { v: "BRL", l: "R$" },
+                          { v: "USD", l: "US$" },
+                          { v: "CONS", l: "R$ cons." }
+                        ] as Array<{ v: ChartBase; l: string }>
+                      ).map((opt) => (
                         <button
-                          key={m}
-                          onClick={() => setForecastMoeda(m)}
+                          key={opt.v}
+                          onClick={() => setForecastMoeda(opt.v)}
                           className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                            forecastMoeda === m
+                            forecastMoeda === opt.v
                               ? "bg-primary text-black"
                               : "bg-background text-muted hover:text-foreground"
                           }`}
                         >
-                          {m === "BRL" ? "R$" : "US$"}
+                          {opt.l}
                         </button>
                       ))}
                     </div>
                   </div>
                 </div>
                 <div className="p-5">
-                  <ForecastChart months={forecast.months} metric={forecastMetric} moeda={forecastMoeda} />
+                  <ForecastChart
+                    months={forecast.months}
+                    metric={forecastMetric}
+                    moeda={forecastMoeda}
+                    rates={rates}
+                  />
                 </div>
               </div>
             )}
@@ -397,6 +454,65 @@ function AnnualSummaryCard({
           <p className="mt-1 text-right text-xs text-muted">
             {net >= 0 ? "Ano fecha positivo" : "Ano fecha negativo"}
           </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AnnualConsolidatedCard({
+  months,
+  rates,
+  year
+}: {
+  months: ForecastMonth[];
+  rates: Record<string, number | null>;
+  year: number;
+}) {
+  let entrada = 0;
+  let saida = 0;
+  let semCotacao = 0;
+  for (const m of months) {
+    entrada += m.entrada_brl;
+    saida += m.saida_brl;
+    const rate = rates[m.month];
+    if (rate != null) {
+      entrada += m.entrada_usd * rate;
+      saida += m.saida_usd * rate;
+    } else if (m.entrada_usd !== 0 || m.saida_usd !== 0) {
+      semCotacao++;
+    }
+  }
+  const net = entrada - saida;
+  return (
+    <div className="rounded-xl border border-primary/30 bg-surface p-5">
+      <div className="mb-4">
+        <h3 className="text-sm font-semibold text-foreground">Resultado consolidado do ano (R$)</h3>
+        <p className="text-xs text-muted">
+          Cada mês usa sua cotação salva (ou a última conhecida). Edite a cotação na visão Mês.
+        </p>
+      </div>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted">Entradas ({year})</span>
+          <span className="font-mono text-emerald-300">{formatCurrency(entrada, "BRL")}</span>
+        </div>
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted">Saídas ({year})</span>
+          <span className="font-mono text-danger">{formatCurrency(saida, "BRL")}</span>
+        </div>
+        <div className="border-t border-border pt-3">
+          <div className="flex items-center justify-between">
+            <span className="text-base font-semibold text-foreground">Resultado consolidado</span>
+            <span className={`font-mono text-xl font-semibold ${net >= 0 ? "text-sky-300" : "text-danger"}`}>
+              {formatCurrency(net, "BRL")}
+            </span>
+          </div>
+          {semCotacao > 0 && (
+            <p className="mt-1 text-right text-xs text-amber-300">
+              {semCotacao} {semCotacao === 1 ? "mês sem cotação" : "meses sem cotação"} — o lado US$ deles ficou de fora.
+            </p>
+          )}
         </div>
       </div>
     </div>
@@ -496,6 +612,120 @@ function BreakdownRow({ label, value, moeda }: { label: string; value: number; m
     <div className="flex items-center justify-between">
       <span className="text-muted">{label}</span>
       <span className="font-mono text-muted">{formatCurrency(value, moeda)}</span>
+    </div>
+  );
+}
+
+// Resultado do mês (competência) de uma moeda: recebido + a receber − pago − a pagar
+function netOf(d: DashboardResponse["brl"]): number {
+  return d.recebido_mes + d.a_receber - d.pago_mes - d.a_pagar;
+}
+
+/* Card de resultado consolidado em R$ — converte o lado USD pela cotação do mês */
+function ConsolidatedMonthCard({
+  month,
+  brlNet,
+  usdNet,
+  fxRate,
+  onRateSaved
+}: {
+  month: string;
+  brlNet: number;
+  usdNet: number;
+  fxRate: FxRate | null;
+  onRateSaved: () => void;
+}) {
+  const [rateInput, setRateInput] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState("");
+
+  useEffect(() => {
+    setRateInput(fxRate?.usd_brl != null ? String(fxRate.usd_brl).replace(".", ",") : "");
+  }, [fxRate, month]);
+
+  const rate = fxRate?.usd_brl ?? null;
+  const consolidado = rate != null ? brlNet + usdNet * rate : null;
+
+  const save = async () => {
+    const parsed = parseNumberPtBr(rateInput);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setSaveErr("Cotação inválida.");
+      return;
+    }
+    setSaving(true);
+    setSaveErr("");
+    try {
+      await apiFetch(`/gerencial/fx-rate`, {
+        method: "PUT",
+        body: JSON.stringify({ month, usd_brl: parsed })
+      });
+      onRateSaved();
+    } catch (err: any) {
+      setSaveErr(err?.message || "Falha ao salvar.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-primary/30 bg-surface p-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">Resultado consolidado (R$)</h3>
+          <p className="text-xs text-muted">
+            Soma os dois lados convertendo o US$ pela cotação do mês. Responde como o mês realmente fechou.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-2 text-xs text-muted">
+            US$ 1 =
+            <div className="flex items-center rounded-lg border border-border bg-background pl-2 focus-within:border-primary/50">
+              <span className="text-xs text-muted">R$</span>
+              <input
+                value={rateInput}
+                onChange={(e) => setRateInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && save()}
+                placeholder="5,00"
+                inputMode="decimal"
+                className="w-20 bg-transparent px-2 py-1.5 text-sm text-foreground outline-none"
+              />
+            </div>
+          </label>
+          <button
+            onClick={save}
+            disabled={saving}
+            className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-black hover:bg-primary/90 disabled:opacity-50"
+          >
+            {saving ? "Salvando…" : "Salvar"}
+          </button>
+        </div>
+      </div>
+
+      {saveErr && <p className="mt-2 text-xs text-danger">{saveErr}</p>}
+      {fxRate?.inherited && fxRate.source_month && (
+        <p className="mt-2 text-xs text-amber-300">
+          Cotação herdada de {formatMonthLabel(fxRate.source_month)} — informe a cotação deste mês pra fixar.
+        </p>
+      )}
+
+      <div className="mt-4 flex flex-wrap items-end justify-between gap-2 border-t border-border pt-4">
+        <span className="text-base font-semibold text-foreground">Resultado do mês (consolidado)</span>
+        {consolidado != null ? (
+          <div className="text-right">
+            <span
+              className={`font-mono text-2xl font-semibold ${consolidado >= 0 ? "text-sky-300" : "text-danger"}`}
+            >
+              {formatCurrency(consolidado, "BRL")}
+            </span>
+            <p className="mt-1 text-xs text-muted">
+              {formatCurrency(brlNet, "BRL")} + {formatCurrency(usdNet, "USD")} ×{" "}
+              {rate?.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+            </p>
+          </div>
+        ) : (
+          <span className="text-sm text-muted">Informe a cotação pra consolidar.</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -636,15 +866,31 @@ function ItemGroup({
 function ForecastChart({
   months,
   metric,
-  moeda
+  moeda,
+  rates
 }: {
   months: ForecastMonth[];
   metric: ForecastMetric;
-  moeda: Moeda;
+  moeda: ChartBase;
+  rates?: Record<string, number | null>;
 }) {
+  // Moeda do eixo Y: CONS consolida em R$, então usa R$
+  const tickMoeda: Moeda = moeda === "USD" ? "USD" : "BRL";
+
   const getValue = (m: ForecastMonth): number => {
-    const ent = moeda === "BRL" ? m.entrada_brl : m.entrada_usd;
-    const sai = moeda === "BRL" ? m.saida_brl : m.saida_usd;
+    let ent: number;
+    let sai: number;
+    if (moeda === "CONS") {
+      const rate = rates?.[m.month] ?? 0;
+      ent = m.entrada_brl + m.entrada_usd * rate;
+      sai = m.saida_brl + m.saida_usd * rate;
+    } else if (moeda === "BRL") {
+      ent = m.entrada_brl;
+      sai = m.saida_brl;
+    } else {
+      ent = m.entrada_usd;
+      sai = m.saida_usd;
+    }
     if (metric === "entrada") return ent;
     if (metric === "saida") return sai;
     return ent - sai;
@@ -681,14 +927,14 @@ function ForecastChart({
           strokeDasharray="3,3"
         />
         <text x={padL - 8} y={padT + 4} textAnchor="end" fontSize="10" fill="currentColor" fillOpacity="0.5">
-          {formatTickShort(max, moeda)}
+          {formatTickShort(max, tickMoeda)}
         </text>
         <text x={padL - 8} y={zeroY + 4} textAnchor="end" fontSize="10" fill="currentColor" fillOpacity="0.5">
           0
         </text>
         {min < 0 && (
           <text x={padL - 8} y={padT + innerH + 4} textAnchor="end" fontSize="10" fill="currentColor" fillOpacity="0.5">
-            {formatTickShort(min, moeda)}
+            {formatTickShort(min, tickMoeda)}
           </text>
         )}
 
@@ -721,7 +967,7 @@ function ForecastChart({
                 fill="currentColor"
                 fillOpacity="0.7"
               >
-                {formatTickShort(v, moeda)}
+                {formatTickShort(v, tickMoeda)}
               </text>
               <text x={xCenter} y={H - 10} textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.5">
                 {shortMonth(m.month)}
@@ -894,6 +1140,11 @@ function FluxoTab() {
           )}
         </>
       ) : null}
+
+      <div className="mt-6 space-y-6">
+        <ReconciliationSection />
+        <RemittancesSection />
+      </div>
     </>
   );
 }
@@ -978,6 +1229,358 @@ function CashflowMonthRow({
           </span>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ---- Saldos & Conciliação de caixa ---- */
+
+function ReconciliationSection() {
+  const monthOpts = buildMonthOptions();
+  const [month, setMonth] = useState(currentYearMonth());
+  const [recon, setRecon] = useState<ReconciliationResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const r = await apiFetch(`/gerencial/reconciliation?month=${month}`);
+      setRecon(r as ReconciliationResponse);
+    } catch (err: any) {
+      setError(err?.message || "Falha ao carregar conciliação.");
+    } finally {
+      setLoading(false);
+    }
+  }, [month]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return (
+    <div className="rounded-xl border border-border bg-surface">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">Saldos & conciliação</h2>
+          <p className="text-xs text-muted">
+            Informe o saldo no dia 01. Esperado fim do mês = abertura + recebido − pago ± remessa. No dia 01 do mês
+            seguinte, veja se bate.
+          </p>
+        </div>
+        <select
+          value={month}
+          onChange={(e) => setMonth(e.target.value)}
+          className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary/50"
+        >
+          {monthOpts.map((m) => (
+            <option key={m.value} value={m.value}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {error && <p className="px-5 py-3 text-sm text-danger">{error}</p>}
+
+      {loading && !recon ? (
+        <div className="flex justify-center py-10">
+          <Loader2 className="h-5 w-5 animate-spin text-primary" />
+        </div>
+      ) : recon ? (
+        <div className="grid gap-6 p-5 md:grid-cols-2">
+          <MoedaReconColumn moeda="BRL" month={month} nextMonth={recon.next_month} data={recon.brl} onSaved={load} />
+          <MoedaReconColumn moeda="USD" month={month} nextMonth={recon.next_month} data={recon.usd} onSaved={load} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function MoedaReconColumn({
+  moeda,
+  month,
+  nextMonth,
+  data,
+  onSaved
+}: {
+  moeda: Moeda;
+  month: string;
+  nextMonth: string;
+  data: ReconciliationResponse["brl"];
+  onSaved: () => void;
+}) {
+  const isBrl = moeda === "BRL";
+  const remessa = isBrl ? -data.remessa_saida : data.remessa_entrada;
+  const temRemessa = remessa !== 0;
+  const bate = data.diferenca != null && Math.abs(data.diferenca) < 0.01;
+
+  return (
+    <div>
+      <h3 className="mb-3 text-sm font-semibold text-foreground">
+        {isBrl ? "Caracol BR (R$)" : "Caracol LLC (US$)"}
+      </h3>
+      <div className="space-y-2 text-sm">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-muted">Saldo em 01/{formatMonthLabel(month)}</span>
+          <EditableBalance month={month} moeda={moeda} value={data.abertura} onSaved={onSaved} />
+        </div>
+        <div className="flex items-center justify-between border-t border-border pt-2">
+          <span className="text-muted">+ Recebido no mês</span>
+          <span className="font-mono text-emerald-300">{formatCurrency(data.recebido, moeda)}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-muted">− Pago no mês</span>
+          <span className="font-mono text-danger">{formatCurrency(data.pago, moeda)}</span>
+        </div>
+        {temRemessa && (
+          <div className="flex items-center justify-between">
+            <span className="text-muted">{isBrl ? "− Remessa enviada" : "+ Remessa recebida"}</span>
+            <span className={`font-mono ${isBrl ? "text-danger" : "text-emerald-300"}`}>
+              {formatCurrency(remessa, moeda)}
+            </span>
+          </div>
+        )}
+        <div className="flex items-center justify-between border-t border-border pt-2">
+          <span className="font-medium text-foreground">= Esperado fim do mês</span>
+          <span className="font-mono font-semibold text-foreground">
+            {data.esperado_fim != null ? formatCurrency(data.esperado_fim, moeda) : "—"}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-2 pt-1">
+          <span className="text-muted">Saldo em 01/{formatMonthLabel(nextMonth)}</span>
+          <EditableBalance month={nextMonth} moeda={moeda} value={data.abertura_proximo} onSaved={onSaved} />
+        </div>
+        <div className="flex items-center justify-between border-t border-border pt-2">
+          <span className="text-muted">Diferença</span>
+          {data.diferenca == null ? (
+            <span className="text-xs text-muted">informe os dois saldos</span>
+          ) : bate ? (
+            <span className="inline-flex items-center gap-1 font-mono text-sm text-emerald-300">
+              <Check className="h-3.5 w-3.5" /> bate
+            </span>
+          ) : (
+            <span className="font-mono text-sm font-semibold text-amber-300">
+              {formatCurrency(data.diferenca, moeda)}
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EditableBalance({
+  month,
+  moeda,
+  value,
+  onSaved
+}: {
+  month: string;
+  moeda: Moeda;
+  value: number | null;
+  onSaved: () => void;
+}) {
+  const [v, setV] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setV(value != null ? String(value).replace(".", ",") : "");
+  }, [value, month]);
+
+  const save = async () => {
+    const parsed = parseNumberPtBr(v);
+    if (!Number.isFinite(parsed)) return;
+    if (value != null && parsed === value) return; // sem mudança
+    setSaving(true);
+    try {
+      await apiFetch(`/gerencial/opening-balance`, {
+        method: "PUT",
+        body: JSON.stringify(moeda === "BRL" ? { month, brl: parsed } : { month, usd: parsed })
+      });
+      onSaved();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center rounded-lg border border-border bg-background pl-2 focus-within:border-primary/50">
+      <span className="text-xs text-muted">{moeda === "BRL" ? "R$" : "US$"}</span>
+      <input
+        value={v}
+        onChange={(e) => setV(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+        placeholder="0,00"
+        inputMode="decimal"
+        disabled={saving}
+        className="w-28 bg-transparent px-2 py-1.5 text-right font-mono text-sm text-foreground outline-none disabled:opacity-50"
+      />
+    </div>
+  );
+}
+
+/* ---- Remessas internacionais (R$ → US$) ---- */
+
+function RemittancesSection() {
+  const [items, setItems] = useState<Remittance[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const [data, setData] = useState("");
+  const [brlOut, setBrlOut] = useState("");
+  const [usdIn, setUsdIn] = useState("");
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [formErr, setFormErr] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const r = await apiFetch(`/gerencial/remittances`);
+      setItems((r as RemittancesResponse).items);
+    } catch (err: any) {
+      setError(err?.message || "Falha ao carregar remessas.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const add = async () => {
+    const brl = parseNumberPtBr(brlOut);
+    const usd = parseNumberPtBr(usdIn);
+    if (!data) return setFormErr("Informe a data.");
+    if (!Number.isFinite(brl) || brl <= 0) return setFormErr("R$ enviado inválido.");
+    if (!Number.isFinite(usd) || usd <= 0) return setFormErr("US$ recebido inválido.");
+    setSaving(true);
+    setFormErr("");
+    try {
+      await apiFetch(`/gerencial/remittances`, {
+        method: "POST",
+        body: JSON.stringify({ data, brl_out: brl, usd_in: usd, notes: notes || null })
+      });
+      setData("");
+      setBrlOut("");
+      setUsdIn("");
+      setNotes("");
+      load();
+    } catch (err: any) {
+      setFormErr(err?.message || "Falha ao salvar.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async (id: string) => {
+    await apiFetch(`/gerencial/remittances/${id}`, { method: "DELETE" });
+    load();
+  };
+
+  return (
+    <div className="rounded-xl border border-border bg-surface">
+      <div className="border-b border-border px-5 py-4">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <ArrowLeftRight className="h-4 w-4 text-muted" /> Remessas (R$ → US$)
+        </h2>
+        <p className="text-xs text-muted">
+          Dinheiro enviado pra fora: diminui o real e aumenta o dólar no caixa. Só fluxo de caixa — não entra no
+          Fechamento.
+        </p>
+      </div>
+
+      {/* Form */}
+      <div className="flex flex-wrap items-end gap-3 border-b border-border px-5 py-4">
+        <label className="text-xs text-muted">
+          Data
+          <input
+            type="date"
+            value={data}
+            onChange={(e) => setData(e.target.value)}
+            className="mt-1 block rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm text-foreground outline-none focus:border-primary/50"
+          />
+        </label>
+        <label className="text-xs text-muted">
+          R$ enviado
+          <input
+            value={brlOut}
+            onChange={(e) => setBrlOut(e.target.value)}
+            placeholder="10.000,00"
+            inputMode="decimal"
+            className="mt-1 block w-32 rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm text-foreground outline-none focus:border-primary/50"
+          />
+        </label>
+        <label className="text-xs text-muted">
+          US$ recebido
+          <input
+            value={usdIn}
+            onChange={(e) => setUsdIn(e.target.value)}
+            placeholder="1.800,00"
+            inputMode="decimal"
+            className="mt-1 block w-32 rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm text-foreground outline-none focus:border-primary/50"
+          />
+        </label>
+        <label className="flex-1 text-xs text-muted">
+          Obs (opcional)
+          <input
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="banco, finalidade…"
+            className="mt-1 block w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm text-foreground outline-none focus:border-primary/50"
+          />
+        </label>
+        <button
+          onClick={add}
+          disabled={saving}
+          className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-medium text-black hover:bg-primary/90 disabled:opacity-50"
+        >
+          <Plus className="h-3.5 w-3.5" /> {saving ? "Salvando…" : "Adicionar"}
+        </button>
+      </div>
+      {formErr && <p className="px-5 pt-2 text-xs text-danger">{formErr}</p>}
+
+      {/* Lista */}
+      {error && <p className="px-5 py-3 text-sm text-danger">{error}</p>}
+      {loading && !items ? (
+        <div className="flex justify-center py-8">
+          <Loader2 className="h-5 w-5 animate-spin text-primary" />
+        </div>
+      ) : items && items.length > 0 ? (
+        <ul className="divide-y divide-border">
+          {items.map((it) => {
+            const implied = it.usd_in > 0 ? it.brl_out / it.usd_in : 0;
+            return (
+              <li key={it.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+                <div className="min-w-0">
+                  <p className="text-sm text-foreground">
+                    {it.data} · <span className="font-mono text-danger">−{formatCurrency(it.brl_out, "BRL")}</span>{" "}
+                    → <span className="font-mono text-emerald-300">+{formatCurrency(it.usd_in, "USD")}</span>
+                  </p>
+                  <p className="text-xs text-muted">
+                    Cotação efetiva R$ {implied.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                    {it.notes ? ` · ${it.notes}` : ""}
+                  </p>
+                </div>
+                <button
+                  onClick={() => remove(it.id)}
+                  className="rounded-lg border border-border p-1.5 text-muted hover:border-danger/40 hover:text-danger"
+                  title="Remover"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="px-5 py-8 text-center text-sm text-muted">Nenhuma remessa registrada.</p>
+      )}
     </div>
   );
 }

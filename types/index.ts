@@ -141,3 +141,53 @@ export interface CashflowResponse {
   overdue: CashflowOverdue;
   months: CashflowMonth[];
 }
+
+// ----- Etapa 4.5: câmbio, saldo de abertura, remessa, conciliação -----
+
+export interface FxRate {
+  month: string; // YYYY-MM
+  usd_brl: number | null;
+  source_month: string | null; // YYYY-MM de onde veio (se herdada)
+  inherited: boolean;
+}
+
+export interface FxRatesResponse {
+  rates: FxRate[];
+}
+
+export interface OpeningBalance {
+  month: string; // YYYY-MM
+  brl: number | null;
+  usd: number | null;
+}
+
+export interface Remittance {
+  id: string;
+  data: string; // YYYY-MM-DD
+  brl_out: number;
+  usd_in: number;
+  notes?: string | null;
+}
+
+export interface RemittancesResponse {
+  items: Remittance[];
+}
+
+export interface ReconciliationMoeda {
+  abertura: number | null;
+  recebido: number;
+  pago: number;
+  remessa_saida: number;
+  remessa_entrada: number;
+  movimento: number;
+  esperado_fim: number | null;
+  abertura_proximo: number | null;
+  diferenca: number | null;
+}
+
+export interface ReconciliationResponse {
+  month: string; // YYYY-MM
+  next_month: string; // YYYY-MM
+  brl: ReconciliationMoeda;
+  usd: ReconciliationMoeda;
+}
