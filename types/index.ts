@@ -136,6 +136,10 @@ export interface CashflowMonth {
   a_receber_usd: number;
   remessa_brl_out: number;
   remessa_usd_in: number;
+  recebido_brl: number;
+  recebido_usd: number;
+  pago_brl: number;
+  pago_usd: number;
 }
 
 export interface CashflowResponse {

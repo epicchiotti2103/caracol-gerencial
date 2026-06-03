@@ -1031,7 +1031,10 @@ function FluxoTab() {
     const receber = moeda === "BRL" ? m.a_receber_brl : m.a_receber_usd;
     const pagar = moeda === "BRL" ? m.a_pagar_brl : m.a_pagar_usd;
     const remessa = moeda === "USD" ? m.remessa_usd_in : -(m.remessa_brl_out ?? 0);
-    const movimento = receber - pagar + remessa;
+    const recebidoReal = moeda === "BRL" ? m.recebido_brl ?? 0 : m.recebido_usd ?? 0;
+    const pagoReal = moeda === "BRL" ? m.pago_brl ?? 0 : m.pago_usd ?? 0;
+    // movimento = pendente (a receber − a pagar) + realizado (recebido − pago) + remessa
+    const movimento = receber - pagar + recebidoReal - pagoReal + remessa;
     running = running != null ? running + movimento : null;
     const isCurrent = i === 0 || (data?.today != null && m.month === data.today.slice(0, 7));
     return {
@@ -1039,6 +1042,8 @@ function FluxoTab() {
       receber,
       pagar,
       remessa,
+      recebidoReal,
+      pagoReal,
       saldoProjetado: running,
       overduePagar: isCurrent ? overduePagar : 0
     };
@@ -1174,6 +1179,8 @@ function FluxoTab() {
                     receber={r.receber}
                     pagar={r.pagar}
                     remessa={r.remessa}
+                    recebidoReal={r.recebidoReal}
+                    pagoReal={r.pagoReal}
                     saldoProjetado={r.saldoProjetado}
                     overduePagar={r.overduePagar}
                   />
@@ -1243,6 +1250,8 @@ function CashflowMonthRow({
   receber,
   pagar,
   remessa,
+  recebidoReal,
+  pagoReal,
   saldoProjetado,
   overduePagar = 0
 }: {
@@ -1251,15 +1260,26 @@ function CashflowMonthRow({
   receber: number;
   pagar: number;
   remessa: number; // efeito da remessa na moeda (USD +, BRL −)
+  recebidoReal: number; // já recebido (caixa)
+  pagoReal: number; // já pago (caixa)
   saldoProjetado: number | null;
   overduePagar?: number;
 }) {
   const showOverdueHint = overduePagar > 0;
   const temRemessa = remessa !== 0;
+  const temRealizado = recebidoReal !== 0 || pagoReal !== 0;
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
       <span className="w-24 text-sm font-medium text-foreground">{shortMonth(month.month)}</span>
       <div className="flex flex-1 flex-wrap items-center justify-end gap-x-8 gap-y-1">
+        {temRealizado && (
+          <div className="text-right">
+            <span className="text-xs text-muted">Já movimentado </span>
+            <span className="font-mono text-sm text-emerald-300">+{formatCurrency(recebidoReal, moeda)}</span>
+            <span className="text-muted"> / </span>
+            <span className="font-mono text-sm text-danger">−{formatCurrency(pagoReal, moeda)}</span>
+          </div>
+        )}
         <div className="text-right">
           <span className="text-xs text-muted">A receber </span>
           <span className="font-mono text-sm text-emerald-300">{formatCurrency(receber, moeda)}</span>
