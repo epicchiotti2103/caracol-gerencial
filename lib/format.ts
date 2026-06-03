@@ -46,6 +46,20 @@ export function formatMonthLabel(yearMonth: string): string {
   return `${MONTHS_PT_BR[month - 1]}/${year}`;
 }
 
+// ISO timestamp -> "DD/MM/AAAA HH:mm" pt-BR (pra "editado por X em ...")
+export function formatDateTimeShort(iso?: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
 export function currentYearMonth(): string {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;

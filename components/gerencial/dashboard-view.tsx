@@ -30,7 +30,8 @@ import type {
   OpeningBalance,
   Remittance,
   RemittancesResponse,
-  ReconciliationResponse
+  ReconciliationResponse,
+  EditStamp
 } from "@/types";
 import {
   formatCurrency,
@@ -39,7 +40,8 @@ import {
   currentYearMonth,
   currentYear,
   parseNumberPtBr,
-  formatMonthLabel
+  formatMonthLabel,
+  formatDateTimeShort
 } from "@/lib/format";
 
 type Tab = "fechamento" | "fluxo";
@@ -705,6 +707,11 @@ function ConsolidatedMonthCard({
       {fxRate?.inherited && fxRate.source_month && (
         <p className="mt-2 text-xs text-amber-300">
           Cotação herdada de {formatMonthLabel(fxRate.source_month)} — informe a cotação deste mês pra fixar.
+        </p>
+      )}
+      {fxRate?.by && fxRate.updated_at && (
+        <p className="mt-2 text-xs text-muted">
+          Cotação editada por {fxRate.by} em {formatDateTimeShort(fxRate.updated_at)}
         </p>
       )}
 
@@ -1397,9 +1404,15 @@ function MoedaReconColumn({
         {isBrl ? "Caracol BR (R$)" : "Caracol LLC (US$)"}
       </h3>
       <div className="space-y-2 text-sm">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-muted">Saldo em 01/{formatMonthLabel(month)}</span>
-          <EditableBalance month={month} moeda={moeda} value={data.abertura} onSaved={onSaved} />
+          <EditableBalance
+            month={month}
+            moeda={moeda}
+            value={data.abertura}
+            meta={data.abertura_meta}
+            onSaved={onSaved}
+          />
         </div>
         <div className="flex items-center justify-between border-t border-border pt-2">
           <span className="text-muted">+ Recebido no mês</span>
@@ -1423,9 +1436,15 @@ function MoedaReconColumn({
             {data.esperado_fim != null ? formatCurrency(data.esperado_fim, moeda) : "—"}
           </span>
         </div>
-        <div className="flex items-center justify-between gap-2 pt-1">
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
           <span className="text-muted">Saldo em 01/{formatMonthLabel(nextMonth)}</span>
-          <EditableBalance month={nextMonth} moeda={moeda} value={data.abertura_proximo} onSaved={onSaved} />
+          <EditableBalance
+            month={nextMonth}
+            moeda={moeda}
+            value={data.abertura_proximo}
+            meta={data.abertura_proximo_meta}
+            onSaved={onSaved}
+          />
         </div>
         <div className="flex items-center justify-between border-t border-border pt-2">
           <span className="text-muted">Diferença</span>
@@ -1450,11 +1469,13 @@ function EditableBalance({
   month,
   moeda,
   value,
+  meta,
   onSaved
 }: {
   month: string;
   moeda: Moeda;
   value: number | null;
+  meta?: EditStamp | null;
   onSaved: () => void;
 }) {
   const [v, setV] = useState("");
@@ -1485,41 +1506,44 @@ function EditableBalance({
   };
 
   return (
-    <div className="flex items-center gap-1">
-      <div className="flex items-center rounded-lg border border-border bg-background pl-2 focus-within:border-primary/50">
-        <span className="text-xs text-muted">{moeda === "BRL" ? "R$" : "US$"}</span>
-        <input
-          value={v}
-          onChange={(e) => {
-            setV(e.target.value);
-            setJustSaved(false);
-          }}
-          onBlur={save}
-          onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-          placeholder="0,00"
-          inputMode="decimal"
-          disabled={saving}
-          className="w-28 bg-transparent px-2 py-1.5 text-right font-mono text-sm text-foreground outline-none disabled:opacity-50"
-        />
+    <div className="flex flex-col items-end gap-0.5">
+      <div className="flex items-center gap-1">
+        <div className="flex items-center rounded-lg border border-border bg-background pl-2 focus-within:border-primary/50">
+          <span className="text-xs text-muted">{moeda === "BRL" ? "R$" : "US$"}</span>
+          <input
+            value={v}
+            onChange={(e) => {
+              setV(e.target.value);
+              setJustSaved(false);
+            }}
+            onBlur={save}
+            onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+            placeholder="0,00"
+            inputMode="decimal"
+            disabled={saving}
+            className="w-28 bg-transparent px-2 py-1.5 text-right font-mono text-sm text-foreground outline-none disabled:opacity-50"
+          />
+        </div>
+        <button
+          onClick={save}
+          disabled={saving || (!dirty && !justSaved)}
+          title={dirty ? "Salvar" : justSaved ? "Salvo" : "Sem alterações"}
+          className={`rounded-lg border p-1.5 transition-colors ${
+            dirty
+              ? "border-primary/50 text-primary hover:bg-primary/10"
+              : justSaved
+              ? "border-emerald-400/40 text-emerald-300"
+              : "border-border text-muted"
+          }`}
+        >
+          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+        </button>
       </div>
-      <button
-        onClick={save}
-        disabled={saving || (!dirty && !justSaved)}
-        title={dirty ? "Salvar" : justSaved ? "Salvo" : "Sem alterações"}
-        className={`rounded-lg border p-1.5 transition-colors ${
-          dirty
-            ? "border-primary/50 text-primary hover:bg-primary/10"
-            : justSaved
-            ? "border-emerald-400/40 text-emerald-300"
-            : "border-border text-muted"
-        }`}
-      >
-        {saving ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        ) : (
-          <Check className="h-3.5 w-3.5" />
-        )}
-      </button>
+      {meta?.by && meta.at && (
+        <span className="text-[10px] text-muted">
+          editado por {meta.by} em {formatDateTimeShort(meta.at)}
+        </span>
+      )}
     </div>
   );
 }
@@ -1669,6 +1693,7 @@ function RemittancesSection({ onChanged }: { onChanged?: () => void }) {
                   <p className="text-xs text-muted">
                     Cotação efetiva R$ {implied.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
                     {it.notes ? ` · ${it.notes}` : ""}
+                    {it.by ? ` · por ${it.by}` : ""}
                   </p>
                 </div>
                 <button

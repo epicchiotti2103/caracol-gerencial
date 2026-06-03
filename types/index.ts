@@ -152,6 +152,13 @@ export interface FxRate {
   usd_brl: number | null;
   source_month: string | null; // YYYY-MM de onde veio (se herdada)
   inherited: boolean;
+  updated_at?: string | null;
+  by?: string | null; // nome de quem editou
+}
+
+export interface EditStamp {
+  by: string | null;
+  at: string | null;
 }
 
 export interface FxRatesResponse {
@@ -170,6 +177,8 @@ export interface Remittance {
   brl_out: number;
   usd_in: number;
   notes?: string | null;
+  created_at?: string | null;
+  by?: string | null; // nome de quem lançou
 }
 
 export interface RemittancesResponse {
@@ -186,6 +195,8 @@ export interface ReconciliationMoeda {
   esperado_fim: number | null;
   abertura_proximo: number | null;
   diferenca: number | null;
+  abertura_meta?: EditStamp | null;
+  abertura_proximo_meta?: EditStamp | null;
 }
 
 export interface ReconciliationResponse {
