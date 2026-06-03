@@ -1016,6 +1016,27 @@ function FluxoTab() {
   const itensReceber = overdueItems.filter((it) => it.tipo === "receber");
   const hasOverdue = overduePagar !== 0 || overdueReceber !== 0;
 
+  // Projeção de saldo: começa no saldo de abertura e corre mês a mês,
+  // aplicando a receber (+), a pagar (−) e remessa (USD +, BRL −).
+  const opening = moeda === "BRL" ? data?.opening?.brl ?? null : data?.opening?.usd ?? null;
+  let running = opening;
+  const timelineRows = (data?.months ?? []).map((m, i) => {
+    const receber = moeda === "BRL" ? m.a_receber_brl : m.a_receber_usd;
+    const pagar = moeda === "BRL" ? m.a_pagar_brl : m.a_pagar_usd;
+    const remessa = moeda === "USD" ? m.remessa_usd_in : -(m.remessa_brl_out ?? 0);
+    const movimento = receber - pagar + remessa;
+    running = running != null ? running + movimento : null;
+    const isCurrent = i === 0 || (data?.today != null && m.month === data.today.slice(0, 7));
+    return {
+      month: m,
+      receber,
+      pagar,
+      remessa,
+      saldoProjetado: running,
+      overduePagar: isCurrent ? overduePagar : 0
+    };
+  });
+
   return (
     <>
       <div className="mb-6 flex items-end justify-between gap-3">
@@ -1114,27 +1135,42 @@ function FluxoTab() {
             )}
           </div>
 
-          {/* Timeline por vencimento */}
+          {/* Projeção de caixa por vencimento */}
           {data.months.length > 0 && (
             <div className="rounded-xl border border-border bg-surface">
-              <div className="border-b border-border px-5 py-4">
-                <h2 className="text-sm font-semibold text-foreground">A pagar / a receber por vencimento</h2>
-                <p className="text-xs text-muted">
-                  Próximos meses pela data de vencimento. Net de caixa = a receber − a pagar.
-                </p>
+              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
+                <div>
+                  <h2 className="text-sm font-semibold text-foreground">Projeção de caixa por vencimento</h2>
+                  <p className="text-xs text-muted">
+                    Saldo inicial + a receber − a pagar ± remessa, por data de vencimento.
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-muted">
+                    Saldo inicial (01/{data.months[0] ? formatMonthLabel(data.months[0].month) : ""})
+                  </p>
+                  {opening != null ? (
+                    <p className="font-mono text-sm font-semibold text-foreground">
+                      {formatCurrency(opening, moeda)}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-amber-300">informe em Saldos &amp; conciliação ↓</p>
+                  )}
+                </div>
               </div>
               <div className="divide-y divide-border">
-                {data.months.map((m, i) => {
-                  const isCurrent = i === 0 || (data.today != null && m.month === data.today.slice(0, 7));
-                  return (
-                    <CashflowMonthRow
-                      key={m.month}
-                      month={m}
-                      moeda={moeda}
-                      overduePagar={isCurrent ? overduePagar : 0}
-                    />
-                  );
-                })}
+                {timelineRows.map((r) => (
+                  <CashflowMonthRow
+                    key={r.month.month}
+                    month={r.month}
+                    moeda={moeda}
+                    receber={r.receber}
+                    pagar={r.pagar}
+                    remessa={r.remessa}
+                    saldoProjetado={r.saldoProjetado}
+                    overduePagar={r.overduePagar}
+                  />
+                ))}
               </div>
             </div>
           )}
@@ -1197,16 +1233,22 @@ function OverdueColumn({
 function CashflowMonthRow({
   month,
   moeda,
+  receber,
+  pagar,
+  remessa,
+  saldoProjetado,
   overduePagar = 0
 }: {
   month: CashflowMonth;
   moeda: Moeda;
+  receber: number;
+  pagar: number;
+  remessa: number; // efeito da remessa na moeda (USD +, BRL −)
+  saldoProjetado: number | null;
   overduePagar?: number;
 }) {
-  const pagar = moeda === "BRL" ? month.a_pagar_brl : month.a_pagar_usd;
-  const receber = moeda === "BRL" ? month.a_receber_brl : month.a_receber_usd;
-  const net = receber - pagar;
   const showOverdueHint = overduePagar > 0;
+  const temRemessa = remessa !== 0;
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
       <span className="w-24 text-sm font-medium text-foreground">{shortMonth(month.month)}</span>
@@ -1222,11 +1264,26 @@ function CashflowMonthRow({
             <p className="text-xs text-muted">(inclui {formatCurrency(overduePagar, moeda)} em atraso)</p>
           )}
         </div>
-        <div className="w-32 text-right">
-          <span className="text-xs text-muted">Net </span>
-          <span className={`font-mono text-sm font-semibold ${net >= 0 ? "text-sky-300" : "text-danger"}`}>
-            {formatCurrency(net, moeda)}
-          </span>
+        {temRemessa && (
+          <div className="text-right">
+            <span className="text-xs text-muted">Remessa </span>
+            <span className={`font-mono text-sm ${remessa >= 0 ? "text-emerald-300" : "text-danger"}`}>
+              {remessa >= 0 ? "+" : ""}
+              {formatCurrency(remessa, moeda)}
+            </span>
+          </div>
+        )}
+        <div className="w-36 text-right">
+          <span className="text-xs text-muted">Saldo proj. </span>
+          {saldoProjetado != null ? (
+            <span
+              className={`font-mono text-sm font-semibold ${saldoProjetado >= 0 ? "text-sky-300" : "text-danger"}`}
+            >
+              {formatCurrency(saldoProjetado, moeda)}
+            </span>
+          ) : (
+            <span className="font-mono text-sm text-muted">—</span>
+          )}
         </div>
       </div>
     </div>

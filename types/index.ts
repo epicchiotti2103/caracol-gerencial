@@ -134,12 +134,15 @@ export interface CashflowMonth {
   a_pagar_usd: number;
   a_receber_brl: number;
   a_receber_usd: number;
+  remessa_brl_out: number;
+  remessa_usd_in: number;
 }
 
 export interface CashflowResponse {
   today: string; // YYYY-MM-DD
   overdue: CashflowOverdue;
   months: CashflowMonth[];
+  opening: { brl: number | null; usd: number | null };
 }
 
 // ----- Etapa 4.5: câmbio, saldo de abertura, remessa, conciliação -----
