@@ -576,9 +576,17 @@ function FluxoTab() {
                 </p>
               </div>
               <div className="divide-y divide-border">
-                {data.months.map((m) => (
-                  <CashflowMonthRow key={m.month} month={m} moeda={moeda} />
-                ))}
+                {data.months.map((m, i) => {
+                  const isCurrent = i === 0 || (data.today != null && m.month === data.today.slice(0, 7));
+                  return (
+                    <CashflowMonthRow
+                      key={m.month}
+                      month={m}
+                      moeda={moeda}
+                      overduePagar={isCurrent ? overduePagar : 0}
+                    />
+                  );
+                })}
               </div>
             </div>
           )}
@@ -633,10 +641,19 @@ function OverdueColumn({
   );
 }
 
-function CashflowMonthRow({ month, moeda }: { month: CashflowMonth; moeda: Moeda }) {
+function CashflowMonthRow({
+  month,
+  moeda,
+  overduePagar = 0
+}: {
+  month: CashflowMonth;
+  moeda: Moeda;
+  overduePagar?: number;
+}) {
   const pagar = moeda === "BRL" ? month.a_pagar_brl : month.a_pagar_usd;
   const receber = moeda === "BRL" ? month.a_receber_brl : month.a_receber_usd;
   const net = receber - pagar;
+  const showOverdueHint = overduePagar > 0;
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
       <span className="w-24 text-sm font-medium text-foreground">{shortMonth(month.month)}</span>
@@ -648,6 +665,9 @@ function CashflowMonthRow({ month, moeda }: { month: CashflowMonth; moeda: Moeda
         <div className="text-right">
           <span className="text-xs text-muted">A pagar </span>
           <span className="font-mono text-sm text-danger">{formatCurrency(pagar, moeda)}</span>
+          {showOverdueHint && (
+            <p className="text-xs text-muted">(inclui {formatCurrency(overduePagar, moeda)} em atraso)</p>
+          )}
         </div>
         <div className="w-32 text-right">
           <span className="text-xs text-muted">Net </span>
