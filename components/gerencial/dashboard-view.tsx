@@ -12,7 +12,8 @@ import {
   ArrowLeftRight,
   Check,
   Plus,
-  Trash2
+  Trash2,
+  X
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import type {
@@ -25,6 +26,8 @@ import type {
   CashflowResponse,
   CashflowItem,
   CashflowMonth,
+  CashflowComposeItem,
+  CashflowItemsResponse,
   FxRate,
   FxRatesResponse,
   OpeningBalance,
@@ -995,6 +998,7 @@ function FluxoTab() {
   const [data, setData] = useState<CashflowResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [drill, setDrill] = useState<{ month: string; tipo: "recebido" | "pago" } | null>(null);
   const [moeda, setMoeda] = useState<Moeda>("BRL");
   const [overdueOpen, setOverdueOpen] = useState(false);
 
@@ -1201,6 +1205,7 @@ function FluxoTab() {
                     remessaOut={r.remessaOut}
                     saldoProjetado={r.saldoProjetado}
                     overduePagar={r.overduePagar}
+                    onDrill={(m, tipo) => setDrill({ month: m, tipo })}
                   />
                 ))}
               </div>
@@ -1213,7 +1218,105 @@ function FluxoTab() {
         <ReconciliationSection onChanged={load} />
         <RemittancesSection onChanged={load} />
       </div>
+
+      {drill && (
+        <CashflowItemsModal
+          month={drill.month}
+          tipo={drill.tipo}
+          moeda={moeda}
+          onClose={() => setDrill(null)}
+        />
+      )}
     </>
+  );
+}
+
+function CashflowItemsModal({
+  month,
+  tipo,
+  moeda,
+  onClose
+}: {
+  month: string;
+  tipo: "recebido" | "pago";
+  moeda: Moeda;
+  onClose: () => void;
+}) {
+  const [items, setItems] = useState<CashflowComposeItem[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const r = await apiFetch(`/gerencial/cashflow/items?month=${month}`);
+        setItems((r as CashflowItemsResponse).items);
+      } catch (err: any) {
+        setError(err?.message || "Falha ao carregar.");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [month]);
+
+  const filtered = (items ?? []).filter((it) => it.moeda === moeda && it.tipo === tipo);
+  const total = filtered.reduce((s, it) => s + it.amount, 0);
+  const titulo = tipo === "recebido" ? "Recebido" : "Pago";
+  const accent = tipo === "recebido" ? "text-emerald-300" : "text-danger";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div
+        className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-xl border border-border bg-surface shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">
+              {titulo} em {formatMonthLabel(month)} ({moeda === "BRL" ? "R$" : "US$"})
+            </h2>
+            <p className="text-xs text-muted">Títulos liquidados no mês (regime de caixa).</p>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-muted hover:bg-background hover:text-foreground">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
+          {loading ? (
+            <div className="flex justify-center py-10">
+              <Loader2 className="h-5 w-5 animate-spin text-primary" />
+            </div>
+          ) : error ? (
+            <p className="py-6 text-center text-sm text-danger">{error}</p>
+          ) : filtered.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted">Nenhum título.</p>
+          ) : (
+            <ul className="space-y-2">
+              {filtered.map((it, i) => (
+                <li
+                  key={`${it.source}-${i}`}
+                  className="flex items-start justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm text-foreground">{it.descricao}</p>
+                    <p className="text-xs text-muted">
+                      {sourceLabel(it.source)} · {it.date}
+                    </p>
+                  </div>
+                  <span className={`flex-shrink-0 font-mono text-sm ${accent}`}>{formatCurrency(it.amount, moeda)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div className="flex items-center justify-between border-t border-border px-5 py-3">
+          <span className="text-sm font-medium text-foreground">Total</span>
+          <span className={`font-mono text-sm font-semibold ${accent}`}>{formatCurrency(total, moeda)}</span>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1269,24 +1372,33 @@ function CashflowCell({
   value,
   moeda,
   tone,
-  title
+  title,
+  onClick
 }: {
   value: number;
   moeda: Moeda;
   tone: string;
   title?: string;
+  onClick?: () => void;
 }) {
   if (value === 0) return <span className="text-right font-mono text-sm text-muted">—</span>;
-  if (!title) {
+  if (!title && !onClick) {
     return <span className={`text-right font-mono text-sm ${tone}`}>{formatCurrency(value, moeda)}</span>;
   }
+  const inner = (
+    <span
+      onClick={onClick}
+      className={`font-mono text-sm underline decoration-dotted decoration-muted/50 underline-offset-4 ${tone} ${
+        onClick ? "cursor-pointer hover:opacity-80" : "cursor-help"
+      }`}
+    >
+      {formatCurrency(value, moeda)}
+    </span>
+  );
+  if (!title) return <span className="flex justify-end">{inner}</span>;
   return (
     <span className="group relative flex justify-end">
-      <span
-        className={`cursor-help font-mono text-sm underline decoration-dotted decoration-muted/50 underline-offset-4 ${tone}`}
-      >
-        {formatCurrency(value, moeda)}
-      </span>
+      {inner}
       <span className="pointer-events-none absolute bottom-full right-0 z-20 mb-1 hidden whitespace-nowrap rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground shadow-lg group-hover:block">
         {title}
       </span>
@@ -1315,7 +1427,8 @@ function CashflowMonthRow({
   pagoReal,
   remessaOut,
   saldoProjetado,
-  overduePagar = 0
+  overduePagar = 0,
+  onDrill
 }: {
   month: CashflowMonth;
   moeda: Moeda;
@@ -1329,6 +1442,7 @@ function CashflowMonthRow({
   remessaOut: number;
   saldoProjetado: number | null;
   overduePagar?: number;
+  onDrill?: (month: string, tipo: "recebido" | "pago") => void;
 }) {
   const showOverdueHint = overduePagar > 0;
   return (
@@ -1346,12 +1460,14 @@ function CashflowMonthRow({
         moeda={moeda}
         tone="text-emerald-300"
         title={breakdownTitle("Recebimentos", recebidoReal, remessaIn, moeda)}
+        onClick={onDrill ? () => onDrill(month.month, "recebido") : undefined}
       />
       <CashflowCell
         value={pago}
         moeda={moeda}
         tone="text-danger"
         title={breakdownTitle("Pagamentos", pagoReal, remessaOut, moeda)}
+        onClick={onDrill ? () => onDrill(month.month, "pago") : undefined}
       />
       {saldoProjetado != null ? (
         <span

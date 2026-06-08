@@ -149,6 +149,21 @@ export interface CashflowResponse {
   opening: { brl: number | null; usd: number | null };
 }
 
+// Drill-down do caixa realizado (compõe Recebido/Pago da projeção)
+export interface CashflowComposeItem {
+  source: string;
+  descricao: string;
+  tipo: "recebido" | "pago";
+  moeda: Moeda;
+  amount: number;
+  date: string; // YYYY-MM-DD
+}
+
+export interface CashflowItemsResponse {
+  month: string; // YYYY-MM
+  items: CashflowComposeItem[];
+}
+
 // ----- Etapa 4.5: câmbio, saldo de abertura, remessa, conciliação -----
 
 export interface FxRate {
