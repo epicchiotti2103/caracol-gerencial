@@ -20,7 +20,8 @@ export function TransactionMarkPaidModal({ transaction, onClose, onSaved }: Prop
   const toast = useToast();
   const [proof, setProof] = useState<File | null>(null);
   const [paidAt, setPaidAt] = useState(
-    new Date().toISOString().slice(0, 10) // hoje YYYY-MM-DD
+    // Se já pago, prefill com a data registrada; senão hoje
+    transaction.paid_at ? transaction.paid_at.slice(0, 10) : new Date().toISOString().slice(0, 10)
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");

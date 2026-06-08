@@ -51,7 +51,7 @@ export function TransactionsView() {
       if (kindFilter !== "todos") params.set("kind", kindFilter);
       if (statusFilter !== "todos") params.set("status", statusFilter);
       const data = await apiFetch(`/gerencial/transactions?${params.toString()}`);
-      setList(Array.isArray(data) ? data : []);
+      setList(Array.isArray(data) ? data : data?.items ?? []);
     } catch (err: any) {
       setError(err?.message || "Falha ao carregar.");
     } finally {
@@ -314,15 +314,20 @@ export function TransactionsView() {
                           >
                             <RefreshCw className="h-3.5 w-3.5" />
                           </button>
-                          {!isPaid ? (
-                            <button
-                              onClick={() => setMarking(t)}
-                              className="rounded p-1.5 text-muted hover:bg-emerald-500/15 hover:text-emerald-300"
-                              title={t.kind === "despesa" ? "Marcar como paga" : "Marcar como recebida"}
-                            >
-                              <CheckCircle2 className="h-3.5 w-3.5" />
-                            </button>
-                          ) : (
+                          <button
+                            onClick={() => setMarking(t)}
+                            className="rounded p-1.5 text-muted hover:bg-emerald-500/15 hover:text-emerald-300"
+                            title={
+                              isPaid
+                                ? "Ajustar data/comprovante"
+                                : t.kind === "despesa"
+                                ? "Marcar como paga"
+                                : "Marcar como recebida"
+                            }
+                          >
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                          </button>
+                          {isPaid && (
                             <button
                               onClick={() => unmarkPaid(t)}
                               className="rounded p-1.5 text-muted hover:bg-amber-500/15 hover:text-amber-300"
