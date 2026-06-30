@@ -749,6 +749,8 @@ function sourceLabel(source: string): string {
     case "fechamento":
     case "fechamento_campanha":
       return "Fechamento";
+    case "fechamento_publisher":
+      return "Pagamento publisher";
     case "gerencial_transactions":
       return "Avulso";
     default:
@@ -860,7 +862,11 @@ function ItemGroup({
                     <p className="truncate text-sm text-foreground">{it.descricao}</p>
                     {it.sem_nf === true && (
                       <span
-                        title="Suba uma NF a receber e vincule esta campanha pra faturar"
+                        title={
+                          it.tipo === "pagar"
+                            ? "Suba uma NF a pagar e vincule esta campanha pra registrar o pagamento"
+                            : "Suba uma NF a receber e vincule esta campanha pra faturar"
+                        }
                         className="flex flex-shrink-0 items-center gap-1 rounded bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-300"
                       >
                         <AlertTriangle className="h-3 w-3" />
