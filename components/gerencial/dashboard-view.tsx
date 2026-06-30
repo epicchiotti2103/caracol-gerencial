@@ -751,6 +751,10 @@ function sourceLabel(source: string): string {
       return "Fechamento";
     case "fechamento_publisher":
       return "Pagamento publisher";
+    case "fechamento_custo":
+      return "Custo (fechamento)";
+    case "fechamento_margem":
+      return "Margem (fechamento)";
     case "gerencial_transactions":
       return "Avulso";
     default:
