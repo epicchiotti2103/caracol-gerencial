@@ -88,7 +88,7 @@ export type DashboardItemTipo = "receber" | "pagar";
 export type DashboardItemStatus = "realizado" | "pendente";
 
 export interface DashboardItem {
-  source: string; // nf_invoices | nf_receivables | fechamento | gerencial_transactions
+  source: string; // nf_invoices | nf_receivables | fechamento_campanha | gerencial_transactions
   id: string;
   descricao: string;
   tipo: DashboardItemTipo;
@@ -96,6 +96,10 @@ export interface DashboardItem {
   moeda: Moeda;
   amount: number;
   due_date?: string | null; // YYYY-MM-DD
+  // Itens vindos de fechamento de campanha travado ainda sem NF emitida
+  sem_nf?: boolean;
+  campanha_id?: string | null;
+  campanha_name?: string | null;
 }
 
 export interface DashboardItemsResponse {

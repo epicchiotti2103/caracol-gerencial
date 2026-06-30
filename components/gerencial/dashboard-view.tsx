@@ -747,6 +747,7 @@ function sourceLabel(source: string): string {
     case "nf_receivables":
       return "NF a receber";
     case "fechamento":
+    case "fechamento_campanha":
       return "Fechamento";
     case "gerencial_transactions":
       return "Avulso";
@@ -855,7 +856,18 @@ function ItemGroup({
             <li key={`${it.source}-${it.id}`} className="rounded-lg border border-border bg-background px-3 py-2">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="truncate text-sm text-foreground">{it.descricao}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="truncate text-sm text-foreground">{it.descricao}</p>
+                    {it.sem_nf === true && (
+                      <span
+                        title="Suba uma NF a receber e vincule esta campanha pra faturar"
+                        className="flex flex-shrink-0 items-center gap-1 rounded bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-300"
+                      >
+                        <AlertTriangle className="h-3 w-3" />
+                        sem NF vinculada
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-muted">
                     {sourceLabel(it.source)}
                     {it.due_date && <span> · vence {it.due_date}</span>}
