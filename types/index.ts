@@ -151,6 +151,7 @@ export interface CashflowMonth {
 
 export interface CashflowResponse {
   today: string; // YYYY-MM-DD
+  anchor?: string; // YYYY-MM-DD — 1o dia do mês âncora da projeção (= start, ou mês atual)
   overdue: CashflowOverdue;
   months: CashflowMonth[];
   opening: { brl: number | null; usd: number | null };

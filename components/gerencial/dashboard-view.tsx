@@ -1030,14 +1030,14 @@ function FluxoTab() {
     setLoading(true);
     setError("");
     try {
-      const r = await apiFetch(`/gerencial/cashflow?months_ahead=6`);
+      const r = await apiFetch(`/gerencial/cashflow?months_ahead=6&start=${month}`);
       setData(r as CashflowResponse);
     } catch (err: any) {
       setError(err?.message || "Falha ao carregar fluxo de caixa.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [month]);
 
   useEffect(() => {
     load();
@@ -1068,7 +1068,8 @@ function FluxoTab() {
     // movimento = a receber − a pagar + recebido − pago
     const movimento = receber - pagar + recebido - pago;
     running = running != null ? running + movimento : null;
-    const isCurrent = i === 0 || (data?.today != null && m.month === data.today.slice(0, 7));
+    // O backend traz os vencidos (antes de 01/âncora) para o primeiro bucket.
+    const isAnchor = i === 0;
     return {
       month: m,
       receber,
@@ -1080,7 +1081,7 @@ function FluxoTab() {
       pagoReal,
       remessaOut,
       saldoProjetado: running,
-      overduePagar: isCurrent ? overduePagar : 0
+      overduePagar: isAnchor ? overduePagar : 0
     };
   });
 
@@ -1095,7 +1096,7 @@ function FluxoTab() {
           <select
             value={month}
             onChange={(e) => setMonth(e.target.value)}
-            title="Mês do caixa realizado / conciliação"
+            title="Mês da aba (projeção, em atraso, caixa realizado e conciliação)"
             className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary/50"
           >
             {monthOpts.map((m) => (
@@ -1163,7 +1164,9 @@ function FluxoTab() {
                   <h2 className={`text-sm font-semibold ${hasOverdue ? "text-danger" : "text-foreground"}`}>
                     Em atraso (vencido)
                   </h2>
-                  <p className="text-xs text-muted">Títulos com vencimento anterior a hoje ({data.today}).</p>
+                  <p className="text-xs text-muted">
+                    Títulos com vencimento anterior a 01/{formatMonthLabel(data.anchor ?? month)}.
+                  </p>
                 </div>
               </div>
               <div className="flex items-center gap-6">
@@ -1200,11 +1203,12 @@ function FluxoTab() {
               <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
                 <div>
                   <h2 className="text-sm font-semibold text-foreground">
-                    Projeção de caixa por vencimento <span className="text-muted">(a partir de hoje)</span>
+                    Projeção de caixa por vencimento{" "}
+                    <span className="text-muted">(a partir de {formatMonthLabel(data.anchor ?? month)})</span>
                   </h2>
                   <p className="text-xs text-muted">
-                    Saldo inicial + a receber − a pagar ± remessa, por data de vencimento. Sempre do mês atual em
-                    diante — não depende do mês selecionado acima.
+                    Saldo inicial + a receber − a pagar ± remessa, por data de vencimento. Ancora no mês selecionado
+                    no topo da aba.
                   </p>
                 </div>
                 <div className="text-right">
