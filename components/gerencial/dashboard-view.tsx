@@ -1017,11 +1017,13 @@ function ForecastChart({
    ============================================================ */
 
 function FluxoTab() {
+  const monthOpts = buildMonthOptions();
   const [data, setData] = useState<CashflowResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [drill, setDrill] = useState<{ month: string; tipo: "recebido" | "pago" } | null>(null);
   const [moeda, setMoeda] = useState<Moeda>("BRL");
+  const [month, setMonth] = useState(currentYearMonth());
   const [overdueOpen, setOverdueOpen] = useState(false);
 
   const load = useCallback(async () => {
@@ -1090,6 +1092,18 @@ function FluxoTab() {
           Diferente do Fechamento, que é por competência.
         </p>
         <div className="flex flex-shrink-0 items-center gap-2">
+          <select
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
+            title="Mês do caixa realizado / conciliação"
+            className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary/50"
+          >
+            {monthOpts.map((m) => (
+              <option key={m.value} value={m.value}>
+                {m.label}
+              </option>
+            ))}
+          </select>
           <div className="flex items-center gap-1">
             {(["BRL", "USD"] as Moeda[]).map((m) => (
               <button
@@ -1185,9 +1199,12 @@ function FluxoTab() {
             <div className="rounded-xl border border-border bg-surface">
               <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
                 <div>
-                  <h2 className="text-sm font-semibold text-foreground">Projeção de caixa por vencimento</h2>
+                  <h2 className="text-sm font-semibold text-foreground">
+                    Projeção de caixa por vencimento <span className="text-muted">(a partir de hoje)</span>
+                  </h2>
                   <p className="text-xs text-muted">
-                    Saldo inicial + a receber − a pagar ± remessa, por data de vencimento.
+                    Saldo inicial + a receber − a pagar ± remessa, por data de vencimento. Sempre do mês atual em
+                    diante — não depende do mês selecionado acima.
                   </p>
                 </div>
                 <div className="text-right">
@@ -1237,7 +1254,8 @@ function FluxoTab() {
       ) : null}
 
       <div className="mt-6 space-y-6">
-        <ReconciliationSection onChanged={load} />
+        <MonthCashRealized month={month} moeda={moeda} />
+        <ReconciliationSection month={month} onChanged={load} />
         <RemittancesSection onChanged={load} />
       </div>
 
@@ -1506,11 +1524,145 @@ function CashflowMonthRow({
   );
 }
 
+/* ---- Caixa realizado do mês selecionado (respeita o seletor de mês) ---- */
+
+function MonthCashRealized({ month, moeda }: { month: string; moeda: Moeda }) {
+  const [items, setItems] = useState<CashflowComposeItem[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const r = await apiFetch(`/gerencial/cashflow/items?month=${month}`);
+        if (alive) setItems((r as CashflowItemsResponse).items);
+      } catch (err: any) {
+        if (alive) setError(err?.message || "Falha ao carregar o caixa do mês.");
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [month]);
+
+  const ofMoeda = (items ?? []).filter((it) => it.moeda === moeda);
+  const recebidos = ofMoeda.filter((it) => it.tipo === "recebido");
+  const pagos = ofMoeda.filter((it) => it.tipo === "pago");
+  const totalRec = recebidos.reduce((s, it) => s + it.amount, 0);
+  const totalPago = pagos.reduce((s, it) => s + it.amount, 0);
+  const net = totalRec - totalPago;
+  const hasItems = ofMoeda.length > 0;
+
+  return (
+    <div className="rounded-xl border border-border bg-surface">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        disabled={!hasItems}
+        className="flex w-full items-center justify-between gap-3 border-b border-border px-5 py-4 text-left disabled:cursor-default"
+      >
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">
+            Caixa realizado de {formatMonthLabel(month)} ({moeda === "BRL" ? "R$" : "US$"})
+          </h2>
+          <p className="text-xs text-muted">
+            O que de fato entrou e saiu no mês, por data de liquidação. Respeita o mês selecionado no topo da aba.
+          </p>
+        </div>
+        <div className="flex items-center gap-6">
+          <div className="text-right">
+            <p className="text-xs text-muted">Recebido</p>
+            <p className="font-mono text-sm font-semibold text-emerald-300">{formatCurrency(totalRec, moeda)}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-xs text-muted">Pago</p>
+            <p className="font-mono text-sm font-semibold text-danger">{formatCurrency(totalPago, moeda)}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-xs text-muted">Movimento</p>
+            <p className={`font-mono text-sm font-semibold ${net >= 0 ? "text-sky-300" : "text-danger"}`}>
+              {formatCurrency(net, moeda)}
+            </p>
+          </div>
+          {hasItems &&
+            (open ? (
+              <ChevronDown className="h-4 w-4 text-muted" />
+            ) : (
+              <ChevronRight className="h-4 w-4 text-muted" />
+            ))}
+        </div>
+      </button>
+
+      {error && <p className="px-5 py-3 text-sm text-danger">{error}</p>}
+
+      {loading && !items ? (
+        <div className="flex justify-center py-8">
+          <Loader2 className="h-5 w-5 animate-spin text-primary" />
+        </div>
+      ) : !error && !hasItems ? (
+        <p className="px-5 py-8 text-center text-sm text-muted">
+          Nenhum movimento de caixa em {moeda === "BRL" ? "R$" : "US$"} neste mês.
+        </p>
+      ) : open ? (
+        <div className="grid gap-6 p-5 md:grid-cols-2">
+          <MonthCashColumn title="Recebido (entrou)" accent="text-emerald-300" items={recebidos} moeda={moeda} />
+          <MonthCashColumn title="Pago (saiu)" accent="text-danger" items={pagos} moeda={moeda} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function MonthCashColumn({
+  title,
+  accent,
+  items,
+  moeda
+}: {
+  title: string;
+  accent: string;
+  items: CashflowComposeItem[];
+  moeda: Moeda;
+}) {
+  const total = items.reduce((s, it) => s + it.amount, 0);
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className={`text-xs font-semibold uppercase tracking-wide ${accent}`}>{title}</h3>
+        <span className={`font-mono text-xs ${accent}`}>{formatCurrency(total, moeda)}</span>
+      </div>
+      {items.length === 0 ? (
+        <p className="text-xs text-muted">Nenhum título.</p>
+      ) : (
+        <ul className="space-y-2">
+          {items.map((it, i) => (
+            <li
+              key={`${it.source}-${i}`}
+              className="flex items-start justify-between gap-2 rounded-lg border border-border bg-background px-3 py-2"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm text-foreground">{it.descricao}</p>
+                <p className="text-xs text-muted">
+                  {sourceLabel(it.source)} · {it.date}
+                </p>
+              </div>
+              <span className={`flex-shrink-0 font-mono text-sm ${accent}`}>{formatCurrency(it.amount, moeda)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /* ---- Saldos & Conciliação de caixa ---- */
 
-function ReconciliationSection({ onChanged }: { onChanged?: () => void }) {
-  const monthOpts = buildMonthOptions();
-  const [month, setMonth] = useState(currentYearMonth());
+function ReconciliationSection({ month, onChanged }: { month: string; onChanged?: () => void }) {
   const [recon, setRecon] = useState<ReconciliationResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1542,23 +1694,14 @@ function ReconciliationSection({ onChanged }: { onChanged?: () => void }) {
     <div className="rounded-xl border border-border bg-surface">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
         <div>
-          <h2 className="text-sm font-semibold text-foreground">Saldos & conciliação</h2>
+          <h2 className="text-sm font-semibold text-foreground">
+            Saldos & conciliação — {formatMonthLabel(month)}
+          </h2>
           <p className="text-xs text-muted">
             Informe o saldo no dia 01. Esperado fim do mês = abertura + recebido − pago ± remessa. No dia 01 do mês
-            seguinte, veja se bate.
+            seguinte, veja se bate. Usa o mês selecionado no topo da aba.
           </p>
         </div>
-        <select
-          value={month}
-          onChange={(e) => setMonth(e.target.value)}
-          className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary/50"
-        >
-          {monthOpts.map((m) => (
-            <option key={m.value} value={m.value}>
-              {m.label}
-            </option>
-          ))}
-        </select>
       </div>
 
       {error && <p className="px-5 py-3 text-sm text-danger">{error}</p>}
