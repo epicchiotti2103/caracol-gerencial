@@ -22,6 +22,7 @@ import {
   currentYearMonth,
   buildMonthOptions
 } from "@/lib/format";
+import { contaLabel } from "@/lib/contas";
 
 type StatusFilter = "todos" | "pendente" | "pago";
 
@@ -234,7 +235,7 @@ export function TransactionsView() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border">
-                {["Tipo", "Descrição", "Categoria", "Valor", "País", "Vencimento", "Status", "Ações"].map((h) => (
+                {["Tipo", "Descrição", "Categoria", "Valor", "Conta", "País", "Vencimento", "Status", "Ações"].map((h) => (
                   <th
                     key={h}
                     className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted"
@@ -247,13 +248,13 @@ export function TransactionsView() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center">
+                  <td colSpan={9} className="py-12 text-center">
                     <Loader2 className="mx-auto h-5 w-5 animate-spin text-primary" />
                   </td>
                 </tr>
               ) : list.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-sm text-muted">
+                  <td colSpan={9} className="py-12 text-center text-sm text-muted">
                     Nenhuma movimentação. Clique em "Nova movimentação" pra adicionar.
                   </td>
                 </tr>
@@ -287,6 +288,9 @@ export function TransactionsView() {
                       <td className="px-4 py-3 text-muted">{t.category}</td>
                       <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-sm text-foreground">
                         {formatCurrency(t.amount, t.moeda)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-muted">
+                        {contaLabel(t.moeda, t.conta)}
                       </td>
                       <td className="px-4 py-3 text-muted">
                         {t.caracol_entity === "BR" ? "Brasil" : "Exterior"}

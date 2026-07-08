@@ -20,7 +20,15 @@ App de controle financeiro interno da Caracol. Etapa 4 do eixo financeiro (apos 
 - Next.js 14 + TypeScript + Tailwind v3 (mesmo tema laranja da suite)
 - Auth via SSO no dominio `.aeobr.com.br` (cookie compartilhado)
 - Backend: rotas `/api/v1/gerencial/*` em `tracker-caracol/backend/app/routes/gerencial.py`
-- Banco: `gerencial_transactions` no Supabase `vdjecbkmukjurhyvprug`
+- Banco (Supabase `vdjecbkmukjurhyvprug`): `gerencial_transactions`, `gerencial_opening_balances`, `gerencial_remittances`, `gerencial_fx_rates`, `gerencial_transfers`
+
+## Dimensão CONTA
+
+Cada moeda tem **contas** onde o dinheiro fica (o total por moeda continua somando, ganha split por conta):
+- **BRL**: `conta_corrente` ("Conta Corrente", default), `investimento` ("Investimento")
+- **USD**: `helmbank` ("HelmBank", default), `tronlink` ("Tronlink (USDT)")
+
+Valores canônicos ficam em `lib/contas.ts` (espelham `GET /gerencial/contas`). Onde a conta aparece: seletor no form de transação (opções dependem da moeda), saldo de abertura por conta (um input por conta), origem/destino da remessa (`brl_conta`/`usd_conta`), transferências internas entre contas da mesma moeda, e o split nos cards de saldo do dashboard (`saldo_contas`).
 
 ## Permissao
 
@@ -55,3 +63,10 @@ So `hub_role='admin'` acessa. Backend valida via `require_hub_admin`.
   - **Taxa de transferência** dos lotes de pagamento de NF entra como saída de caixa (depende da migration 044 no `caracol-nf`/backend; queries resilientes se a tabela não existir).
   - **Fix**: lista de Transações estava sempre vazia (lia `{items,total}` como array); e agora dá pra **ajustar a data de pagamento** de um lançamento já pago (botão ✓ reabre o modal com a data registrada) — útil quando a competência é de um mês mas o pagamento foi em outro.
 - **Fase 4.7**: a aba **Fluxo de caixa** ganhou um **seletor de mês único no topo** que comanda a aba inteira. Com o backend aceitando `start=YYYY-MM` no `GET /gerencial/cashflow` (response traz `anchor`), a **"Projeção de caixa por vencimento"** passa a ancorar no mês selecionado (buckets a partir dele), o card **"Em atraso"** conta vencidos antes de 01/âncora, e o **"Saldo inicial"** é o de 01/âncora. O mesmo seletor controla a seção **"Caixa realizado de \<mês\>"** (Recebido/Pago/Movimento do mês, com drill-down por data de liquidação — `/gerencial/cashflow/items?month=`) e **"Saldos & conciliação"** (que perdeu o seletor próprio e usa o do topo). Escolher, ex., MAIO → projeção começa em Mai/26, "Em atraso" = vencidos antes de 01/05, "Saldo inicial (01/Maio/2026)".
+- **Fase 4.8** (atual): dimensão **CONTA** por moeda (ver seção "Dimensão CONTA"). **Requer migration 059** (`gerencial_transactions.conta`, `gerencial_opening_balances.conta` na PK, `gerencial_remittances.brl_conta`/`usd_conta`, nova tabela `gerencial_transfers`, + RLS nas tabelas do gerencial). Mudanças na UI:
+  - **Saldo em caixa por conta** (Fluxo): dois cards (R$/US$) mostram o saldo de cada conta + total por moeda, do bloco `saldo_contas` de `/gerencial/cashflow` (abertura + movimentos conta-aware do mês; NF a pagar/receber não têm conta).
+  - **Saldo de abertura por conta**: "Saldos & conciliação" passou a ter **um input por conta**. ⚠ `PUT /gerencial/opening-balance` mudou o contrato: body agora é `{ month, balances: [{ moeda, conta, amount }] }` (não mais `{ month, brl, usd }`). GET devolve `contas: { BRL: {conta:amount}, USD: {conta:amount} }` (chaves de moeda MAIÚSCULAS) além do total `brl`/`usd`.
+  - **Form de transação**: seletor de **Conta** (opções dependem da moeda; troca de moeda reseta pro default). Coluna **Conta** na tabela de transações.
+  - **Remessa**: seletores de **conta origem (R$)** e **conta destino (US$)** → `brl_conta`/`usd_conta`.
+  - **Transferência interna** (Fluxo): move saldo entre contas da mesma moeda (ex HelmBank ↔ Tronlink). Net-zero no total da moeda. Endpoints `/gerencial/transfers` (GET com `?month=`, POST, DELETE); lista/apaga as do mês.
+  - ⚠ Casing do backend é assimétrico: `opening-balance.contas` usa chaves de moeda **MAIÚSCULAS** (`BRL`/`USD`) com mapa plano `{conta: amount}`; `dashboard`/`cashflow.saldo_contas` usa **minúsculas** (`brl`/`usd`) com `{ total, contas: {conta: val} }`.

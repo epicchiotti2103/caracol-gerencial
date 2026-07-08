@@ -34,7 +34,10 @@ import type {
   Remittance,
   RemittancesResponse,
   ReconciliationResponse,
-  EditStamp
+  EditStamp,
+  SaldoContas,
+  Transfer,
+  TransfersResponse
 } from "@/types";
 import {
   formatCurrency,
@@ -46,6 +49,7 @@ import {
   formatMonthLabel,
   formatDateTimeShort
 } from "@/lib/format";
+import { contasOf, contaLabel, CONTA_DEFAULT } from "@/lib/contas";
 
 type Tab = "fechamento" | "fluxo";
 
@@ -1147,6 +1151,9 @@ function FluxoTab() {
         </div>
       ) : data ? (
         <>
+          {/* Saldo em caixa por conta (onde o dinheiro fica) */}
+          <SaldoContasCards saldo={data.saldo_contas} />
+
           {/* Card "Em atraso" em destaque */}
           <div
             className={`mb-6 rounded-xl border ${
@@ -1261,6 +1268,7 @@ function FluxoTab() {
         <MonthCashRealized month={month} moeda={moeda} />
         <ReconciliationSection month={month} onChanged={load} />
         <RemittancesSection onChanged={load} />
+        <TransfersSection month={month} onChanged={load} />
       </div>
 
       {drill && (
@@ -1272,6 +1280,56 @@ function FluxoTab() {
         />
       )}
     </>
+  );
+}
+
+/* Saldo em caixa por conta (onde o dinheiro fica) — split por conta + total */
+function SaldoContasCards({ saldo }: { saldo?: SaldoContas }) {
+  if (!saldo) return null; // backend antigo sem saldo_contas — não quebra
+  return (
+    <div className="mb-6 grid gap-4 md:grid-cols-2">
+      <SaldoContaCard title="Caracol BR (R$)" moeda="BRL" data={saldo.brl} />
+      <SaldoContaCard title="Caracol LLC (US$)" moeda="USD" data={saldo.usd} />
+    </div>
+  );
+}
+
+function SaldoContaCard({
+  title,
+  moeda,
+  data
+}: {
+  title: string;
+  moeda: Moeda;
+  data: SaldoContas["brl"];
+}) {
+  const contas = contasOf(moeda);
+  return (
+    <div className="rounded-xl border border-border bg-surface p-5">
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        <Wallet className="h-4 w-4 text-muted" />
+      </div>
+      <div className="space-y-2 text-sm">
+        {contas.map((c) => (
+          <div key={c.value} className="flex items-center justify-between">
+            <span className="text-muted">{c.label}</span>
+            <span className="font-mono text-foreground">
+              {formatCurrency(data?.contas?.[c.value] ?? 0, moeda)}
+            </span>
+          </div>
+        ))}
+        <div className="flex items-center justify-between border-t border-border pt-2">
+          <span className="text-base font-semibold text-foreground">Total em caixa</span>
+          <span className="font-mono text-lg font-semibold text-sky-300">
+            {formatCurrency(data?.total ?? 0, moeda)}
+          </span>
+        </div>
+      </div>
+      <p className="mt-2 text-xs text-muted">
+        Abertura + movimentos do mês por conta. NF a pagar/receber não têm conta, então ficam de fora.
+      </p>
+    </div>
   );
 }
 
@@ -1668,21 +1726,32 @@ function MonthCashColumn({
 
 function ReconciliationSection({ month, onChanged }: { month: string; onChanged?: () => void }) {
   const [recon, setRecon] = useState<ReconciliationResponse | null>(null);
+  // Saldos de abertura por conta (mês corrente + próximo) — para os inputs por conta
+  const [openCur, setOpenCur] = useState<OpeningBalance | null>(null);
+  const [openNext, setOpenNext] = useState<OpeningBalance | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  const nextMonth = nextMonthOf(month);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const r = await apiFetch(`/gerencial/reconciliation?month=${month}`);
+      const [r, oc, on] = await Promise.all([
+        apiFetch(`/gerencial/reconciliation?month=${month}`),
+        apiFetch(`/gerencial/opening-balance?month=${month}`),
+        apiFetch(`/gerencial/opening-balance?month=${nextMonth}`)
+      ]);
       setRecon(r as ReconciliationResponse);
+      setOpenCur(oc as OpeningBalance);
+      setOpenNext(on as OpeningBalance);
     } catch (err: any) {
       setError(err?.message || "Falha ao carregar conciliação.");
     } finally {
       setLoading(false);
     }
-  }, [month]);
+  }, [month, nextMonth]);
 
   useEffect(() => {
     load();
@@ -1721,6 +1790,8 @@ function ReconciliationSection({ month, onChanged }: { month: string; onChanged?
             month={month}
             nextMonth={recon.next_month}
             data={recon.brl}
+            curContas={openCur?.contas?.BRL}
+            nextContas={openNext?.contas?.BRL}
             onSaved={handleSaved}
           />
           <MoedaReconColumn
@@ -1728,6 +1799,8 @@ function ReconciliationSection({ month, onChanged }: { month: string; onChanged?
             month={month}
             nextMonth={recon.next_month}
             data={recon.usd}
+            curContas={openCur?.contas?.USD}
+            nextContas={openNext?.contas?.USD}
             onSaved={handleSaved}
           />
         </div>
@@ -1741,12 +1814,16 @@ function MoedaReconColumn({
   month,
   nextMonth,
   data,
+  curContas,
+  nextContas,
   onSaved
 }: {
   moeda: Moeda;
   month: string;
   nextMonth: string;
   data: ReconciliationResponse["brl"];
+  curContas?: Record<string, number>;
+  nextContas?: Record<string, number>;
   onSaved: () => void;
 }) {
   const isBrl = moeda === "BRL";
@@ -1760,12 +1837,12 @@ function MoedaReconColumn({
         {isBrl ? "Caracol BR (R$)" : "Caracol LLC (US$)"}
       </h3>
       <div className="space-y-2 text-sm">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-muted">Saldo em 01/{formatMonthLabel(month)}</span>
-          <EditableBalance
+        <div>
+          <span className="text-muted">Saldo em 01/{formatMonthLabel(month)} (por conta)</span>
+          <OpeningBalanceContaEditor
             month={month}
             moeda={moeda}
-            value={data.abertura}
+            contaValues={curContas}
             meta={data.abertura_meta}
             onSaved={onSaved}
           />
@@ -1792,12 +1869,12 @@ function MoedaReconColumn({
             {data.esperado_fim != null ? formatCurrency(data.esperado_fim, moeda) : "—"}
           </span>
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-          <span className="text-muted">Saldo em 01/{formatMonthLabel(nextMonth)}</span>
-          <EditableBalance
+        <div className="pt-1">
+          <span className="text-muted">Saldo em 01/{formatMonthLabel(nextMonth)} (por conta)</span>
+          <OpeningBalanceContaEditor
             month={nextMonth}
             moeda={moeda}
-            value={data.abertura_proximo}
+            contaValues={nextContas}
             meta={data.abertura_proximo_meta}
             onSaved={onSaved}
           />
@@ -1821,84 +1898,118 @@ function MoedaReconColumn({
   );
 }
 
-function EditableBalance({
+// Próximo mês (YYYY-MM) de um mês YYYY-MM
+function nextMonthOf(month: string): string {
+  const m = month.match(/^(\d{4})-(\d{2})/);
+  if (!m) return month;
+  const y = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10);
+  return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, "0")}`;
+}
+
+// Editor do saldo de abertura POR CONTA (um input por conta da moeda). Salva
+// tudo num único PUT { month, balances: [{ moeda, conta, amount }] }.
+function OpeningBalanceContaEditor({
   month,
   moeda,
-  value,
+  contaValues,
   meta,
   onSaved
 }: {
   month: string;
   moeda: Moeda;
-  value: number | null;
+  contaValues?: Record<string, number>; // conta -> amount (só as informadas vêm do backend)
   meta?: EditStamp | null;
   onSaved: () => void;
 }) {
-  const [v, setV] = useState("");
+  const contas = contasOf(moeda);
+  const [inputs, setInputs] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
-  const [justSaved, setJustSaved] = useState(false);
+  const [err, setErr] = useState("");
 
+  // Seed dos inputs a partir dos valores do backend. Sempre itera a lista
+  // canônica de contas (contaValues traz só as informadas).
   useEffect(() => {
-    setV(value != null ? String(value).replace(".", ",") : "");
-  }, [value, month]);
+    const seeded: Record<string, string> = {};
+    for (const c of contas) {
+      const v = contaValues?.[c.value];
+      seeded[c.value] = v != null ? String(v).replace(".", ",") : "";
+    }
+    setInputs(seeded);
+  }, [contaValues, moeda, month]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const parsed = parseNumberPtBr(v);
-  const dirty = v.trim() !== "" && Number.isFinite(parsed) && parsed !== (value ?? NaN);
+  const total = contas.reduce((s, c) => {
+    const n = parseNumberPtBr(inputs[c.value] ?? "");
+    return s + (Number.isFinite(n) ? n : 0);
+  }, 0);
 
   const save = async () => {
-    if (!Number.isFinite(parsed) || parsed === value) return; // inválido ou sem mudança
+    const balances: Array<{ moeda: Moeda; conta: string; amount: number }> = [];
+    for (const c of contas) {
+      const raw = (inputs[c.value] ?? "").trim();
+      if (raw === "") continue;
+      const n = parseNumberPtBr(raw);
+      if (!Number.isFinite(n)) {
+        setErr(`Valor inválido em ${c.label}.`);
+        return;
+      }
+      balances.push({ moeda, conta: c.value, amount: n });
+    }
+    if (balances.length === 0) {
+      setErr("Informe ao menos uma conta.");
+      return;
+    }
     setSaving(true);
-    setJustSaved(false);
+    setErr("");
     try {
       await apiFetch(`/gerencial/opening-balance`, {
         method: "PUT",
-        body: JSON.stringify(moeda === "BRL" ? { month, brl: parsed } : { month, usd: parsed })
+        body: JSON.stringify({ month, balances })
       });
-      setJustSaved(true);
       onSaved();
+    } catch (e: any) {
+      setErr(e?.message || "Falha ao salvar.");
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div className="flex flex-col items-end gap-0.5">
-      <div className="flex items-center gap-1">
-        <div className="flex items-center rounded-lg border border-border bg-background pl-2 focus-within:border-primary/50">
-          <span className="text-xs text-muted">{moeda === "BRL" ? "R$" : "US$"}</span>
-          <input
-            value={v}
-            onChange={(e) => {
-              setV(e.target.value);
-              setJustSaved(false);
-            }}
-            onBlur={save}
-            onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-            placeholder="0,00"
-            inputMode="decimal"
-            disabled={saving}
-            className="w-28 bg-transparent px-2 py-1.5 text-right font-mono text-sm text-foreground outline-none disabled:opacity-50"
-          />
-        </div>
+    <div className="mt-1 rounded-lg border border-border bg-background p-2.5">
+      <div className="space-y-1.5">
+        {contas.map((c) => (
+          <div key={c.value} className="flex items-center justify-between gap-2">
+            <span className="text-xs text-muted">{c.label}</span>
+            <div className="flex items-center rounded-md border border-border bg-surface pl-2 focus-within:border-primary/50">
+              <span className="text-xs text-muted">{moeda === "BRL" ? "R$" : "US$"}</span>
+              <input
+                value={inputs[c.value] ?? ""}
+                onChange={(e) => setInputs((p) => ({ ...p, [c.value]: e.target.value }))}
+                onKeyDown={(e) => e.key === "Enter" && save()}
+                placeholder="0,00"
+                inputMode="decimal"
+                disabled={saving}
+                className="w-24 bg-transparent px-2 py-1 text-right font-mono text-sm text-foreground outline-none disabled:opacity-50"
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 flex items-center justify-between border-t border-border pt-2">
+        <span className="text-xs text-muted">Total {formatCurrency(total, moeda)}</span>
         <button
           onClick={save}
-          disabled={saving || (!dirty && !justSaved)}
-          title={dirty ? "Salvar" : justSaved ? "Salvo" : "Sem alterações"}
-          className={`rounded-lg border p-1.5 transition-colors ${
-            dirty
-              ? "border-primary/50 text-primary hover:bg-primary/10"
-              : justSaved
-              ? "border-emerald-400/40 text-emerald-300"
-              : "border-border text-muted"
-          }`}
+          disabled={saving}
+          className="flex items-center gap-1 rounded-md border border-primary/50 px-2 py-1 text-xs text-primary hover:bg-primary/10 disabled:opacity-50"
         >
-          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Salvar
         </button>
       </div>
+      {err && <p className="mt-1 text-xs text-danger">{err}</p>}
       {meta?.by && meta.at && (
-        <span className="text-[10px] text-muted">
+        <p className="mt-1 text-[10px] text-muted">
           editado por {meta.by} em {formatDateTimeShort(meta.at)}
-        </span>
+        </p>
       )}
     </div>
   );
@@ -1914,6 +2025,8 @@ function RemittancesSection({ onChanged }: { onChanged?: () => void }) {
   const [data, setData] = useState("");
   const [brlOut, setBrlOut] = useState("");
   const [usdIn, setUsdIn] = useState("");
+  const [brlConta, setBrlConta] = useState<string>(CONTA_DEFAULT.BRL);
+  const [usdConta, setUsdConta] = useState<string>(CONTA_DEFAULT.USD);
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [formErr, setFormErr] = useState("");
@@ -1946,7 +2059,14 @@ function RemittancesSection({ onChanged }: { onChanged?: () => void }) {
     try {
       await apiFetch(`/gerencial/remittances`, {
         method: "POST",
-        body: JSON.stringify({ data, brl_out: brl, usd_in: usd, notes: notes || null })
+        body: JSON.stringify({
+          data,
+          brl_out: brl,
+          usd_in: usd,
+          brl_conta: brlConta,
+          usd_conta: usdConta,
+          notes: notes || null
+        })
       });
       setData("");
       setBrlOut("");
@@ -2001,6 +2121,20 @@ function RemittancesSection({ onChanged }: { onChanged?: () => void }) {
           />
         </label>
         <label className="text-xs text-muted">
+          Conta origem (R$)
+          <select
+            value={brlConta}
+            onChange={(e) => setBrlConta(e.target.value)}
+            className="mt-1 block rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm text-foreground outline-none focus:border-primary/50"
+          >
+            {contasOf("BRL").map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs text-muted">
           US$ recebido
           <input
             value={usdIn}
@@ -2009,6 +2143,20 @@ function RemittancesSection({ onChanged }: { onChanged?: () => void }) {
             inputMode="decimal"
             className="mt-1 block w-32 rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm text-foreground outline-none focus:border-primary/50"
           />
+        </label>
+        <label className="text-xs text-muted">
+          Conta destino (US$)
+          <select
+            value={usdConta}
+            onChange={(e) => setUsdConta(e.target.value)}
+            className="mt-1 block rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm text-foreground outline-none focus:border-primary/50"
+          >
+            {contasOf("USD").map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </select>
         </label>
         <label className="flex-1 text-xs text-muted">
           Obs (opcional)
@@ -2043,8 +2191,11 @@ function RemittancesSection({ onChanged }: { onChanged?: () => void }) {
               <li key={it.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
                 <div className="min-w-0">
                   <p className="text-sm text-foreground">
-                    {it.data} · <span className="font-mono text-danger">−{formatCurrency(it.brl_out, "BRL")}</span>{" "}
-                    → <span className="font-mono text-emerald-300">+{formatCurrency(it.usd_in, "USD")}</span>
+                    {it.data} ·{" "}
+                    <span className="font-mono text-danger">−{formatCurrency(it.brl_out, "BRL")}</span>
+                    <span className="text-muted"> ({contaLabel("BRL", it.brl_conta)})</span> →{" "}
+                    <span className="font-mono text-emerald-300">+{formatCurrency(it.usd_in, "USD")}</span>
+                    <span className="text-muted"> ({contaLabel("USD", it.usd_conta)})</span>
                   </p>
                   <p className="text-xs text-muted">
                     Cotação efetiva R$ {implied.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
@@ -2065,6 +2216,219 @@ function RemittancesSection({ onChanged }: { onChanged?: () => void }) {
         </ul>
       ) : (
         <p className="px-5 py-8 text-center text-sm text-muted">Nenhuma remessa registrada.</p>
+      )}
+    </div>
+  );
+}
+
+/* ---- Transferências internas (entre contas da MESMA moeda) ---- */
+
+function TransfersSection({ month, onChanged }: { month: string; onChanged?: () => void }) {
+  const [items, setItems] = useState<Transfer[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const [data, setData] = useState("");
+  const [moeda, setMoeda] = useState<Moeda>("BRL");
+  const [fromConta, setFromConta] = useState<string>(contasOf("BRL")[0].value);
+  const [toConta, setToConta] = useState<string>(contasOf("BRL")[1]?.value ?? contasOf("BRL")[0].value);
+  const [amount, setAmount] = useState("");
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [formErr, setFormErr] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const r = await apiFetch(`/gerencial/transfers?month=${month}`);
+      setItems((r as TransfersResponse).items);
+    } catch (err: any) {
+      setError(err?.message || "Falha ao carregar transferências.");
+    } finally {
+      setLoading(false);
+    }
+  }, [month]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Ao trocar a moeda, reseta from/to pras contas dela (de → primeira, para → segunda)
+  const changeMoeda = (m: Moeda) => {
+    setMoeda(m);
+    const cs = contasOf(m);
+    setFromConta(cs[0].value);
+    setToConta(cs[1]?.value ?? cs[0].value);
+  };
+
+  const add = async () => {
+    const amt = parseNumberPtBr(amount);
+    if (!data) return setFormErr("Informe a data.");
+    if (fromConta === toConta) return setFormErr("Escolha contas de origem e destino diferentes.");
+    if (!Number.isFinite(amt) || amt <= 0) return setFormErr("Valor inválido.");
+    setSaving(true);
+    setFormErr("");
+    try {
+      await apiFetch(`/gerencial/transfers`, {
+        method: "POST",
+        body: JSON.stringify({
+          data,
+          moeda,
+          from_conta: fromConta,
+          to_conta: toConta,
+          amount: amt,
+          notes: notes || null
+        })
+      });
+      setData("");
+      setAmount("");
+      setNotes("");
+      load();
+      onChanged?.();
+    } catch (err: any) {
+      setFormErr(err?.message || "Falha ao salvar.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async (id: string) => {
+    await apiFetch(`/gerencial/transfers/${id}`, { method: "DELETE" });
+    load();
+    onChanged?.();
+  };
+
+  const contaOpts = contasOf(moeda);
+
+  return (
+    <div className="rounded-xl border border-border bg-surface">
+      <div className="border-b border-border px-5 py-4">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <ArrowLeftRight className="h-4 w-4 text-muted" /> Transferências internas
+        </h2>
+        <p className="text-xs text-muted">
+          Move saldo entre contas da mesma moeda (ex: HelmBank ↔ Tronlink). Não muda o total da moeda — só onde o
+          dinheiro fica.
+        </p>
+      </div>
+
+      {/* Form */}
+      <div className="flex flex-wrap items-end gap-3 border-b border-border px-5 py-4">
+        <label className="text-xs text-muted">
+          Data
+          <input
+            type="date"
+            value={data}
+            onChange={(e) => setData(e.target.value)}
+            className="mt-1 block rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm text-foreground outline-none focus:border-primary/50"
+          />
+        </label>
+        <label className="text-xs text-muted">
+          Moeda
+          <select
+            value={moeda}
+            onChange={(e) => changeMoeda(e.target.value as Moeda)}
+            className="mt-1 block rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm text-foreground outline-none focus:border-primary/50"
+          >
+            <option value="BRL">R$</option>
+            <option value="USD">US$</option>
+          </select>
+        </label>
+        <label className="text-xs text-muted">
+          De
+          <select
+            value={fromConta}
+            onChange={(e) => setFromConta(e.target.value)}
+            className="mt-1 block rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm text-foreground outline-none focus:border-primary/50"
+          >
+            {contaOpts.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs text-muted">
+          Para
+          <select
+            value={toConta}
+            onChange={(e) => setToConta(e.target.value)}
+            className="mt-1 block rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm text-foreground outline-none focus:border-primary/50"
+          >
+            {contaOpts.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs text-muted">
+          Valor
+          <input
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="1.000,00"
+            inputMode="decimal"
+            className="mt-1 block w-32 rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm text-foreground outline-none focus:border-primary/50"
+          />
+        </label>
+        <label className="flex-1 text-xs text-muted">
+          Obs (opcional)
+          <input
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="motivo…"
+            className="mt-1 block w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm text-foreground outline-none focus:border-primary/50"
+          />
+        </label>
+        <button
+          onClick={add}
+          disabled={saving}
+          className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-medium text-black hover:bg-primary/90 disabled:opacity-50"
+        >
+          <Plus className="h-3.5 w-3.5" /> {saving ? "Salvando…" : "Adicionar"}
+        </button>
+      </div>
+      {formErr && <p className="px-5 pt-2 text-xs text-danger">{formErr}</p>}
+
+      {/* Lista */}
+      {error && <p className="px-5 py-3 text-sm text-danger">{error}</p>}
+      {loading && !items ? (
+        <div className="flex justify-center py-8">
+          <Loader2 className="h-5 w-5 animate-spin text-primary" />
+        </div>
+      ) : items && items.length > 0 ? (
+        <ul className="divide-y divide-border">
+          {items.map((it) => (
+            <li key={it.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+              <div className="min-w-0">
+                <p className="text-sm text-foreground">
+                  {it.data} · <span className="font-mono">{formatCurrency(it.amount, it.moeda)}</span>{" "}
+                  <span className="text-muted">
+                    {contaLabel(it.moeda, it.from_conta)} → {contaLabel(it.moeda, it.to_conta)}
+                  </span>
+                </p>
+                {(it.notes || it.by) && (
+                  <p className="text-xs text-muted">
+                    {it.notes ? it.notes : ""}
+                    {it.notes && it.by ? " · " : ""}
+                    {it.by ? `por ${it.by}` : ""}
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={() => remove(it.id)}
+                className="rounded-lg border border-border p-1.5 text-muted hover:border-danger/40 hover:text-danger"
+                title="Remover"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="px-5 py-8 text-center text-sm text-muted">Nenhuma transferência neste mês.</p>
       )}
     </div>
   );

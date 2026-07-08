@@ -18,6 +18,7 @@ import {
   buildMonthOptions,
   currentYearMonth
 } from "@/lib/format";
+import { contasOf, CONTA_DEFAULT, isContaValid } from "@/lib/contas";
 
 interface Props {
   transaction: GerencialTransaction | null; // null = criar
@@ -39,7 +40,16 @@ export function TransactionEditModal({ transaction, onClose, onSaved }: Props) {
     transaction?.amount != null ? blurFormatNumberPtBr(String(transaction.amount)) : ""
   );
   const [moeda, setMoeda] = useState<Moeda>(transaction?.moeda || "BRL");
+  const [conta, setConta] = useState<string>(
+    transaction?.conta || CONTA_DEFAULT[transaction?.moeda || "BRL"]
+  );
   const [entity, setEntity] = useState<CaracolEntity>(transaction?.caracol_entity || "BR");
+
+  // Ao trocar a moeda, a conta atual pode nao existir na nova moeda -> reseta pro default
+  const changeMoeda = (m: Moeda) => {
+    setMoeda(m);
+    if (!isContaValid(m, conta)) setConta(CONTA_DEFAULT[m]);
+  };
   const [referenceMonth, setReferenceMonth] = useState(
     (transaction?.reference_month || "").slice(0, 7) || currentYearMonth()
   );
@@ -68,6 +78,7 @@ export function TransactionEditModal({ transaction, onClose, onSaved }: Props) {
       description: description.trim(),
       amount: amountValue,
       moeda,
+      conta,
       caracol_entity: entity,
       reference_month: referenceMonth,
       due_date: dueDate || null,
@@ -188,11 +199,23 @@ export function TransactionEditModal({ transaction, onClose, onSaved }: Props) {
               </div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-foreground">Moeda</label>
-                <select value={moeda} onChange={(e) => setMoeda(e.target.value as Moeda)} className={inputCls}>
+                <select value={moeda} onChange={(e) => changeMoeda(e.target.value as Moeda)} className={inputCls}>
                   <option value="BRL">BRL</option>
                   <option value="USD">USD</option>
                 </select>
               </div>
+            </div>
+
+            {/* Conta (opções dependem da moeda) */}
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-foreground">Conta</label>
+              <select value={conta} onChange={(e) => setConta(e.target.value)} className={inputCls}>
+                {contasOf(moeda).map((c) => (
+                  <option key={c.value} value={c.value}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {/* Pais + Mes ref */}

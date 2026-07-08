@@ -11,6 +11,19 @@ export type TransactionKind = "despesa" | "receita";
 export type Moeda = "BRL" | "USD";
 export type CaracolEntity = "BR" | "LLC";
 
+// Dimensao CONTA: onde o dinheiro fica, por moeda (valores canonicos do backend)
+export type Conta = string; // BRL: conta_corrente|investimento · USD: helmbank|tronlink
+
+export interface ContaOption {
+  value: string;
+  label: string;
+}
+
+export interface ContasResponse {
+  contas: Record<Moeda, ContaOption[]>;
+  default: Record<Moeda, string>;
+}
+
 export interface GerencialTransaction {
   id: string;
   kind: TransactionKind;
@@ -18,6 +31,7 @@ export interface GerencialTransaction {
   description: string;
   amount: number;
   moeda: Moeda;
+  conta: Conta;
   caracol_entity: CaracolEntity;
   reference_month: string; // ISO date YYYY-MM-DD
   due_date?: string | null;
@@ -36,6 +50,7 @@ export interface GerencialTransactionCreate {
   description: string;
   amount: number;
   moeda: Moeda;
+  conta?: Conta | null; // null = conta default da moeda
   caracol_entity: CaracolEntity;
   reference_month: string; // YYYY-MM (backend converte pra date)
   due_date?: string | null;
@@ -65,10 +80,24 @@ export interface DashboardMoeda {
   };
 }
 
+// Saldo de caixa por conta (abertura + movimentos conta-aware do mes).
+// total = soma das contas da moeda. Chaves internas de `contas` = valores de conta.
+export interface SaldoContasMoeda {
+  total: number;
+  contas: Record<string, number>;
+}
+
+// Atencao ao casing do backend: dashboard/cashflow usam chaves minusculas (brl/usd)
+export interface SaldoContas {
+  brl: SaldoContasMoeda;
+  usd: SaldoContasMoeda;
+}
+
 export interface DashboardResponse {
   month: string; // YYYY-MM
   brl: DashboardMoeda;
   usd: DashboardMoeda;
+  saldo_contas?: SaldoContas;
 }
 
 export interface ForecastMonth {
@@ -155,6 +184,7 @@ export interface CashflowResponse {
   overdue: CashflowOverdue;
   months: CashflowMonth[];
   opening: { brl: number | null; usd: number | null };
+  saldo_contas?: SaldoContas; // saldo de caixa por conta (chaves brl/usd minúsculas)
 }
 
 // Drill-down do caixa realizado (compõe Recebido/Pago da projeção)
@@ -194,8 +224,14 @@ export interface FxRatesResponse {
 
 export interface OpeningBalance {
   month: string; // YYYY-MM
-  brl: number | null;
+  brl: number | null; // total (soma das contas) ou null
   usd: number | null;
+  // Atencao ao casing: opening-balance usa chaves MAIUSCULAS (BRL/USD), e o
+  // valor e um mapa PLANO {conta: amount} (so contas informadas aparecem).
+  contas?: {
+    BRL: Record<string, number>;
+    USD: Record<string, number>;
+  };
 }
 
 export interface Remittance {
@@ -203,6 +239,8 @@ export interface Remittance {
   data: string; // YYYY-MM-DD
   brl_out: number;
   usd_in: number;
+  brl_conta?: string | null; // conta BRL de origem
+  usd_conta?: string | null; // conta USD de destino
   notes?: string | null;
   created_at?: string | null;
   by?: string | null; // nome de quem lançou
@@ -210,6 +248,24 @@ export interface Remittance {
 
 export interface RemittancesResponse {
   items: Remittance[];
+}
+
+// ----- Transferência interna (entre contas da MESMA moeda) -----
+
+export interface Transfer {
+  id: string;
+  data: string; // YYYY-MM-DD
+  moeda: Moeda;
+  from_conta: string;
+  to_conta: string;
+  amount: number;
+  notes?: string | null;
+  created_at?: string | null;
+  by?: string | null;
+}
+
+export interface TransfersResponse {
+  items: Transfer[];
 }
 
 export interface ReconciliationMoeda {
