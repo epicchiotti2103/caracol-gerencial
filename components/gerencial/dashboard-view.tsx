@@ -759,6 +759,18 @@ function sourceLabel(source: string): string {
       return "Custo (fechamento)";
     case "fechamento_margem":
       return "Margem (fechamento)";
+    // NF a receber com tag Talent: decomposta em custo/margem/imposto (+ offsets a pagar
+    // que reconciliam o net com o summary). Mesmo padrao do split Wave acima.
+    case "nf_receivable_custo":
+      return "Custo (NF a receber)";
+    case "nf_receivable_margem":
+      return "Margem (NF a receber)";
+    case "nf_receivable_imposto":
+      return "Imposto (NF a receber)";
+    case "nf_receivable_custo_offset":
+      return "Repasse (reconciliação)";
+    case "nf_receivable_imposto_offset":
+      return "Imposto (reconciliação)";
     case "gerencial_transactions":
       return "Avulso";
     default:
