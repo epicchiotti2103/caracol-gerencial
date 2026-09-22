@@ -10,7 +10,7 @@ import { currentYear, formatCurrency, formatMonthLabel } from "@/lib/format";
    ABA 3 — RESULTADO ANUAL (competência, tudo em R$)
    ============================================================
    Mesmo eixo e mesma fonte do Fechamento > Mês: 1 GET /gerencial/dashboard?month=
-   por mês (jan..dez). Entradas = recebido + a receber, saídas = pago + a pagar,
+   por mês (jan..dez, a partir de RESULTADO_INICIO). Entradas = recebido + a receber, saídas = pago + a pagar,
    exatamente os números do card "Resultado do mês" — as regras anti-double-count
    (NF vinculada assume o fechamento, recusada/cancelada fora, split Talent/Wave)
    ficam todas no backend, nada é recalculado aqui.
@@ -23,8 +23,16 @@ import { currentYear, formatCurrency, formatMonthLabel } from "@/lib/format";
 
 export const USD_BRL_FALLBACK = 5.6;
 
-// Primeiro ano com dado financeiro no Gerencial. Anos anteriores não têm lançamento.
-const FIRST_YEAR = 2026;
+// Primeiro mês com dado confiável. Meses anteriores não entram em nada (gráficos,
+// cards, tabela, acumulado) e nem são buscados no backend.
+export const RESULTADO_INICIO = "2026-05";
+const FIRST_YEAR = Number(RESULTADO_INICIO.slice(0, 4));
+
+function mesesDoAno(year: number): string[] {
+  return Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`).filter(
+    (m) => m >= RESULTADO_INICIO
+  );
+}
 
 interface MesResultado {
   month: string; // YYYY-MM
@@ -58,14 +66,14 @@ export function ResultadoAnualTab() {
     setLoading(true);
     setError("");
     try {
-      const months = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`);
+      const months = mesesDoAno(year);
       const ds = await Promise.all(months.map((m) => apiFetch(`/gerencial/dashboard?month=${m}`)));
       setDashboards(ds as DashboardResponse[]);
       // Só a cotação cadastrada no PRÓPRIO mês vale; herdada => fallback.
       try {
         const fx = (await apiFetch(`/gerencial/fx-rates?start=${year}-01&months_ahead=11`)) as FxRatesResponse;
         const map: Record<string, number | null> = {};
-        for (const r of fx.rates) map[r.month] = r.inherited ? null : r.usd_brl;
+        for (const r of fx.rates) if (r.month >= RESULTADO_INICIO) map[r.month] = r.inherited ? null : r.usd_brl;
         setRates(map);
       } catch {
         setRates({});
@@ -84,7 +92,7 @@ export function ResultadoAnualTab() {
   const meses: MesResultado[] = useMemo(() => {
     if (!dashboards) return [];
     let acc = 0;
-    return dashboards.map((d) => {
+    return dashboards.filter((d) => d.month >= RESULTADO_INICIO).map((d) => {
       const entradaBrl = d.brl.recebido_mes + d.brl.a_receber;
       const saidaBrl = d.brl.pago_mes + d.brl.a_pagar;
       const entradaUsd = d.usd.recebido_mes + d.usd.a_receber;
@@ -124,6 +132,7 @@ export function ResultadoAnualTab() {
           Por <span className="text-foreground">competência</span>, o mesmo eixo do Fechamento: o resultado de cada mês
           é o mesmo do card &quot;Resultado do mês&quot;. Tudo em R$ — o lado US$ é convertido pela cotação cadastrada
           no mês (sem cotação: R$ {USD_BRL_FALLBACK.toFixed(2).replace(".", ",")}, marcado com *).
+          <span className="mt-1 block text-xs">Dados a partir de {shortMonth(RESULTADO_INICIO).toLowerCase().replace("/", "/20")}.</span>
         </p>
         <div className="flex items-center gap-2">
           <select
