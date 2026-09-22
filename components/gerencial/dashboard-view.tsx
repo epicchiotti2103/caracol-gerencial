@@ -67,6 +67,7 @@ export function DashboardView() {
   useState(() => {
     cacheFechamentoMes.clear();
     cacheFechamentoAno.clear();
+    invalidateFluxo();
     return null;
   });
 
@@ -1523,32 +1524,101 @@ function ForecastChart({
    ABA 2 — FLUXO DE CAIXA (regime de caixa, por vencimento)
    ============================================================ */
 
+// Cache em memória da aba Fluxo, por URL da rota (mês/intervalo já vão na query).
+// Guarda a promise (dedupe: o modal de drill e o Caixa realizado do mesmo mês
+// compartilham 1 request) e o valor resolvido (render síncrono ao voltar pra um
+// mês já visto). Atualizar e qualquer escrita (saldo, remessa, transferência)
+// zeram tudo; zerado também quando o DashboardView remonta.
+const fluxoPromises = new Map<string, Promise<unknown>>();
+const fluxoValues = new Map<string, unknown>();
+
+function invalidateFluxo() {
+  fluxoPromises.clear();
+  fluxoValues.clear();
+}
+
+function fluxoPeek<T>(path: string): T | undefined {
+  return fluxoValues.get(path) as T | undefined;
+}
+
+function fluxoGet<T>(path: string, force = false): Promise<T> {
+  if (!force) {
+    const hit = fluxoPromises.get(path);
+    if (hit) return hit as Promise<T>;
+  }
+  const p: Promise<unknown> = apiFetch(path).then(
+    (v) => {
+      if (fluxoPromises.get(path) === p) fluxoValues.set(path, v);
+      return v;
+    },
+    (err) => {
+      if (fluxoPromises.get(path) === p) fluxoPromises.delete(path);
+      throw err;
+    }
+  );
+  fluxoPromises.set(path, p);
+  return p as Promise<T>;
+}
+
+const cashflowPath = (month: string) => `/gerencial/cashflow?months_ahead=6&start=${month}`;
+const cashflowItemsPath = (month: string) => `/gerencial/cashflow/items?month=${month}`;
+const reconciliationPath = (month: string) => `/gerencial/reconciliation?month=${month}`;
+const openingBalancePath = (month: string) => `/gerencial/opening-balance?month=${month}`;
+const REMITTANCES_PATH = `/gerencial/remittances`;
+const transfersPath = (month: string) => `/gerencial/transfers?month=${month}`;
+
 function FluxoTab() {
   const monthOpts = buildMonthOptions();
-  const [data, setData] = useState<CashflowResponse | null>(null);
+  const [month, setMonth] = useState(currentYearMonth());
+  const [data, setData] = useState<CashflowResponse | null>(
+    () => fluxoPeek<CashflowResponse>(cashflowPath(currentYearMonth())) ?? null
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [drill, setDrill] = useState<{ month: string; tipo: "recebido" | "pago" } | null>(null);
   const [moeda, setMoeda] = useState<Moeda>("BRL");
-  const [month, setMonth] = useState(currentYearMonth());
   const [overdueOpen, setOverdueOpen] = useState(false);
+  // Muda a cada Atualizar: as seções refazem o fetch (o cache já foi zerado).
+  const [refreshKey, setRefreshKey] = useState(0);
+  const reqId = useRef(0);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const r = await apiFetch(`/gerencial/cashflow?months_ahead=6&start=${month}`);
-      setData(r as CashflowResponse);
-    } catch (err: any) {
-      setError(err?.message || "Falha ao carregar fluxo de caixa.");
-    } finally {
-      setLoading(false);
-    }
-  }, [month]);
+  const load = useCallback(
+    async (force = false) => {
+      const id = ++reqId.current;
+      const path = cashflowPath(month);
+      const cached = force ? undefined : fluxoPeek<CashflowResponse>(path);
+      setError("");
+      if (cached) {
+        setData(cached);
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      // Troca de mês sem cache: limpa o mês anterior pra não misturar números.
+      if (!force) setData(null);
+      try {
+        const r = await fluxoGet<CashflowResponse>(path, force);
+        if (id === reqId.current) setData(r);
+      } catch (err: any) {
+        if (id === reqId.current) setError(err?.message || "Falha ao carregar fluxo de caixa.");
+      } finally {
+        if (id === reqId.current) setLoading(false);
+      }
+    },
+    [month]
+  );
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, refreshKey]);
+
+  // Escrita numa seção (saldo/remessa/transferência): recarrega a projeção.
+  const reloadCashflow = useCallback(() => load(true), [load]);
+
+  const refreshAll = () => {
+    invalidateFluxo();
+    setRefreshKey((k) => k + 1);
+  };
 
   const ov = data?.overdue;
   const overduePagar = moeda === "BRL" ? ov?.a_pagar_brl ?? 0 : ov?.a_pagar_usd ?? 0;
@@ -1626,7 +1696,7 @@ function FluxoTab() {
             ))}
           </div>
           <button
-            onClick={load}
+            onClick={refreshAll}
             disabled={loading}
             className="rounded-lg border border-border bg-surface p-2 text-muted hover:bg-surface/80 disabled:opacity-50"
             title="Atualizar"
@@ -1649,9 +1719,7 @@ function FluxoTab() {
       )}
 
       {loading && !data ? (
-        <div className="flex justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-primary" />
-        </div>
+        <FluxoSkeleton />
       ) : data ? (
         <>
           {/* Saldo em caixa por conta (onde o dinheiro fica) */}
@@ -1768,10 +1836,10 @@ function FluxoTab() {
       ) : null}
 
       <div className="mt-6 space-y-6">
-        <MonthCashRealized month={month} moeda={moeda} />
-        <ReconciliationSection month={month} onChanged={load} />
-        <RemittancesSection onChanged={load} />
-        <TransfersSection month={month} onChanged={load} />
+        <MonthCashRealized month={month} moeda={moeda} refreshKey={refreshKey} />
+        <ReconciliationSection month={month} refreshKey={refreshKey} onChanged={reloadCashflow} />
+        <RemittancesSection refreshKey={refreshKey} onChanged={reloadCashflow} />
+        <TransfersSection month={month} refreshKey={refreshKey} onChanged={reloadCashflow} />
       </div>
 
       {drill && (
@@ -1783,6 +1851,32 @@ function FluxoTab() {
         />
       )}
     </>
+  );
+}
+
+function FluxoSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="Carregando fluxo de caixa">
+      <div className="mb-6 grid gap-4 md:grid-cols-2">
+        <SkeletonCard lines={3} />
+        <SkeletonCard lines={3} />
+      </div>
+      <SkeletonCard lines={1} className="mb-6" />
+      <ItemsSkeleton />
+    </div>
+  );
+}
+
+function SectionSkeleton({ rows = 3 }: { rows?: number }) {
+  return (
+    <div className="p-5" aria-busy="true">
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="mb-3 flex items-center justify-between gap-4">
+          <SkeletonBlock className="h-3 w-1/2" />
+          <SkeletonBlock className="h-3 w-24" />
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -1847,23 +1941,29 @@ function CashflowItemsModal({
   moeda: Moeda;
   onClose: () => void;
 }) {
-  const [items, setItems] = useState<CashflowComposeItem[] | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [items, setItems] = useState<CashflowComposeItem[] | null>(
+    () => fluxoPeek<CashflowItemsResponse>(cashflowItemsPath(month))?.items ?? null
+  );
+  const [loading, setLoading] = useState(items == null);
   const [error, setError] = useState("");
 
   useEffect(() => {
+    let alive = true;
     (async () => {
-      setLoading(true);
       setError("");
       try {
-        const r = await apiFetch(`/gerencial/cashflow/items?month=${month}`);
-        setItems((r as CashflowItemsResponse).items);
+        // Mesmo cache do Caixa realizado: drill no mês do topo = 0 requests.
+        const r = await fluxoGet<CashflowItemsResponse>(cashflowItemsPath(month));
+        if (alive) setItems(r.items);
       } catch (err: any) {
-        setError(err?.message || "Falha ao carregar.");
+        if (alive) setError(err?.message || "Falha ao carregar.");
       } finally {
-        setLoading(false);
+        if (alive) setLoading(false);
       }
     })();
+    return () => {
+      alive = false;
+    };
   }, [month]);
 
   const filtered = (items ?? []).filter((it) => it.moeda === moeda && it.tipo === tipo);
@@ -2091,20 +2191,30 @@ function CashflowMonthRow({
 
 /* ---- Caixa realizado do mês selecionado (respeita o seletor de mês) ---- */
 
-function MonthCashRealized({ month, moeda }: { month: string; moeda: Moeda }) {
-  const [items, setItems] = useState<CashflowComposeItem[] | null>(null);
+function MonthCashRealized({ month, moeda, refreshKey }: { month: string; moeda: Moeda; refreshKey: number }) {
+  const [items, setItems] = useState<CashflowComposeItem[] | null>(
+    () => fluxoPeek<CashflowItemsResponse>(cashflowItemsPath(month))?.items ?? null
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
     let alive = true;
+    const path = cashflowItemsPath(month);
+    const cached = fluxoPeek<CashflowItemsResponse>(path);
+    setError("");
+    if (cached) {
+      setItems(cached.items);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setItems(null);
     (async () => {
-      setLoading(true);
-      setError("");
       try {
-        const r = await apiFetch(`/gerencial/cashflow/items?month=${month}`);
-        if (alive) setItems((r as CashflowItemsResponse).items);
+        const r = await fluxoGet<CashflowItemsResponse>(path);
+        if (alive) setItems(r.items);
       } catch (err: any) {
         if (alive) setError(err?.message || "Falha ao carregar o caixa do mês.");
       } finally {
@@ -2114,7 +2224,7 @@ function MonthCashRealized({ month, moeda }: { month: string; moeda: Moeda }) {
     return () => {
       alive = false;
     };
-  }, [month]);
+  }, [month, refreshKey]);
 
   const ofMoeda = (items ?? []).filter((it) => it.moeda === moeda);
   const recebidos = ofMoeda.filter((it) => it.tipo === "recebido");
@@ -2166,9 +2276,7 @@ function MonthCashRealized({ month, moeda }: { month: string; moeda: Moeda }) {
       {error && <p className="px-5 py-3 text-sm text-danger">{error}</p>}
 
       {loading && !items ? (
-        <div className="flex justify-center py-8">
-          <Loader2 className="h-5 w-5 animate-spin text-primary" />
-        </div>
+        <SectionSkeleton rows={2} />
       ) : !error && !hasItems ? (
         <p className="px-5 py-8 text-center text-sm text-muted">
           Nenhum movimento de caixa em {moeda === "BRL" ? "R$" : "US$"} neste mês.
@@ -2227,42 +2335,75 @@ function MonthCashColumn({
 
 /* ---- Saldos & Conciliação de caixa ---- */
 
-function ReconciliationSection({ month, onChanged }: { month: string; onChanged?: () => void }) {
-  const [recon, setRecon] = useState<ReconciliationResponse | null>(null);
-  // Saldos de abertura por conta (mês corrente + próximo) — para os inputs por conta
-  const [openCur, setOpenCur] = useState<OpeningBalance | null>(null);
-  const [openNext, setOpenNext] = useState<OpeningBalance | null>(null);
+function ReconciliationSection({
+  month,
+  refreshKey,
+  onChanged
+}: {
+  month: string;
+  refreshKey: number;
+  onChanged?: () => void;
+}) {
+  const nextMonth = nextMonthOf(month);
+  const [recon, setRecon] = useState<ReconciliationResponse | null>(
+    () => fluxoPeek<ReconciliationResponse>(reconciliationPath(month)) ?? null
+  );
+  // Saldos de abertura por conta (mês corrente + próximo) — para os inputs por conta.
+  // São 2 chamadas distintas (mês e mês+1), não duplicadas; o cache por mês faz a do
+  // mês+1 ser reaproveitada ao avançar o seletor.
+  const [openCur, setOpenCur] = useState<OpeningBalance | null>(
+    () => fluxoPeek<OpeningBalance>(openingBalancePath(month)) ?? null
+  );
+  const [openNext, setOpenNext] = useState<OpeningBalance | null>(
+    () => fluxoPeek<OpeningBalance>(openingBalancePath(nextMonth)) ?? null
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const reqId = useRef(0);
 
-  const nextMonth = nextMonthOf(month);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const [r, oc, on] = await Promise.all([
-        apiFetch(`/gerencial/reconciliation?month=${month}`),
-        apiFetch(`/gerencial/opening-balance?month=${month}`),
-        apiFetch(`/gerencial/opening-balance?month=${nextMonth}`)
-      ]);
-      setRecon(r as ReconciliationResponse);
-      setOpenCur(oc as OpeningBalance);
-      setOpenNext(on as OpeningBalance);
-    } catch (err: any) {
-      setError(err?.message || "Falha ao carregar conciliação.");
-    } finally {
-      setLoading(false);
-    }
-  }, [month, nextMonth]);
+  const load = useCallback(
+    async (force = false) => {
+      const id = ++reqId.current;
+      const paths = [reconciliationPath(month), openingBalancePath(month), openingBalancePath(nextMonth)];
+      setError("");
+      const cached = force ? [] : paths.map((p) => fluxoPeek<unknown>(p));
+      if (!force && cached.every((c) => c !== undefined)) {
+        setRecon(cached[0] as ReconciliationResponse);
+        setOpenCur(cached[1] as OpeningBalance);
+        setOpenNext(cached[2] as OpeningBalance);
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      if (!force) setRecon(null);
+      try {
+        const [r, oc, on] = await Promise.all([
+          fluxoGet<ReconciliationResponse>(paths[0], force),
+          fluxoGet<OpeningBalance>(paths[1], force),
+          fluxoGet<OpeningBalance>(paths[2], force)
+        ]);
+        if (id !== reqId.current) return;
+        setRecon(r);
+        setOpenCur(oc);
+        setOpenNext(on);
+      } catch (err: any) {
+        if (id === reqId.current) setError(err?.message || "Falha ao carregar conciliação.");
+      } finally {
+        if (id === reqId.current) setLoading(false);
+      }
+    },
+    [month, nextMonth]
+  );
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, refreshKey]);
 
-  // Ao salvar um saldo: recarrega a conciliação E avisa o pai (projeção de caixa)
+  // Ao salvar um saldo: zera o cache (saldo muda projeção/conciliação de outros
+  // meses), recarrega a conciliação E avisa o pai (projeção de caixa)
   const handleSaved = useCallback(() => {
-    load();
+    invalidateFluxo();
+    load(true);
     onChanged?.();
   }, [load, onChanged]);
 
@@ -2283,9 +2424,7 @@ function ReconciliationSection({ month, onChanged }: { month: string; onChanged?
       {error && <p className="px-5 py-3 text-sm text-danger">{error}</p>}
 
       {loading && !recon ? (
-        <div className="flex justify-center py-10">
-          <Loader2 className="h-5 w-5 animate-spin text-primary" />
-        </div>
+        <SectionSkeleton rows={5} />
       ) : recon ? (
         <div className="grid gap-6 p-5 md:grid-cols-2">
           <MoedaReconColumn
@@ -2520,8 +2659,10 @@ function OpeningBalanceContaEditor({
 
 /* ---- Remessas internacionais (R$ → US$) ---- */
 
-function RemittancesSection({ onChanged }: { onChanged?: () => void }) {
-  const [items, setItems] = useState<Remittance[] | null>(null);
+function RemittancesSection({ refreshKey, onChanged }: { refreshKey: number; onChanged?: () => void }) {
+  const [items, setItems] = useState<Remittance[] | null>(
+    () => fluxoPeek<RemittancesResponse>(REMITTANCES_PATH)?.items ?? null
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -2534,12 +2675,18 @@ function RemittancesSection({ onChanged }: { onChanged?: () => void }) {
   const [saving, setSaving] = useState(false);
   const [formErr, setFormErr] = useState("");
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (force = false) => {
     setError("");
+    const cached = force ? undefined : fluxoPeek<RemittancesResponse>(REMITTANCES_PATH);
+    if (cached) {
+      setItems(cached.items);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
     try {
-      const r = await apiFetch(`/gerencial/remittances`);
-      setItems((r as RemittancesResponse).items);
+      const r = await fluxoGet<RemittancesResponse>(REMITTANCES_PATH, force);
+      setItems(r.items);
     } catch (err: any) {
       setError(err?.message || "Falha ao carregar remessas.");
     } finally {
@@ -2549,7 +2696,7 @@ function RemittancesSection({ onChanged }: { onChanged?: () => void }) {
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, refreshKey]);
 
   const add = async () => {
     const brl = parseNumberPtBr(brlOut);
@@ -2575,7 +2722,8 @@ function RemittancesSection({ onChanged }: { onChanged?: () => void }) {
       setBrlOut("");
       setUsdIn("");
       setNotes("");
-      load();
+      invalidateFluxo();
+      load(true);
       onChanged?.();
     } catch (err: any) {
       setFormErr(err?.message || "Falha ao salvar.");
@@ -2586,7 +2734,8 @@ function RemittancesSection({ onChanged }: { onChanged?: () => void }) {
 
   const remove = async (id: string) => {
     await apiFetch(`/gerencial/remittances/${id}`, { method: "DELETE" });
-    load();
+    invalidateFluxo();
+    load(true);
     onChanged?.();
   };
 
@@ -2683,9 +2832,7 @@ function RemittancesSection({ onChanged }: { onChanged?: () => void }) {
       {/* Lista */}
       {error && <p className="px-5 py-3 text-sm text-danger">{error}</p>}
       {loading && !items ? (
-        <div className="flex justify-center py-8">
-          <Loader2 className="h-5 w-5 animate-spin text-primary" />
-        </div>
+        <SectionSkeleton rows={2} />
       ) : items && items.length > 0 ? (
         <ul className="divide-y divide-border">
           {items.map((it) => {
@@ -2726,8 +2873,18 @@ function RemittancesSection({ onChanged }: { onChanged?: () => void }) {
 
 /* ---- Transferências internas (entre contas da MESMA moeda) ---- */
 
-function TransfersSection({ month, onChanged }: { month: string; onChanged?: () => void }) {
-  const [items, setItems] = useState<Transfer[] | null>(null);
+function TransfersSection({
+  month,
+  refreshKey,
+  onChanged
+}: {
+  month: string;
+  refreshKey: number;
+  onChanged?: () => void;
+}) {
+  const [items, setItems] = useState<Transfer[] | null>(
+    () => fluxoPeek<TransfersResponse>(transfersPath(month))?.items ?? null
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -2740,22 +2897,36 @@ function TransfersSection({ month, onChanged }: { month: string; onChanged?: () 
   const [saving, setSaving] = useState(false);
   const [formErr, setFormErr] = useState("");
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const r = await apiFetch(`/gerencial/transfers?month=${month}`);
-      setItems((r as TransfersResponse).items);
-    } catch (err: any) {
-      setError(err?.message || "Falha ao carregar transferências.");
-    } finally {
-      setLoading(false);
-    }
-  }, [month]);
+  const reqId = useRef(0);
+
+  const load = useCallback(
+    async (force = false) => {
+      const id = ++reqId.current;
+      const path = transfersPath(month);
+      setError("");
+      const cached = force ? undefined : fluxoPeek<TransfersResponse>(path);
+      if (cached) {
+        setItems(cached.items);
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      if (!force) setItems(null);
+      try {
+        const r = await fluxoGet<TransfersResponse>(path, force);
+        if (id === reqId.current) setItems(r.items);
+      } catch (err: any) {
+        if (id === reqId.current) setError(err?.message || "Falha ao carregar transferências.");
+      } finally {
+        if (id === reqId.current) setLoading(false);
+      }
+    },
+    [month]
+  );
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, refreshKey]);
 
   // Ao trocar a moeda, reseta from/to pras contas dela (de → primeira, para → segunda)
   const changeMoeda = (m: Moeda) => {
@@ -2787,7 +2958,8 @@ function TransfersSection({ month, onChanged }: { month: string; onChanged?: () 
       setData("");
       setAmount("");
       setNotes("");
-      load();
+      invalidateFluxo();
+      load(true);
       onChanged?.();
     } catch (err: any) {
       setFormErr(err?.message || "Falha ao salvar.");
@@ -2798,7 +2970,8 @@ function TransfersSection({ month, onChanged }: { month: string; onChanged?: () 
 
   const remove = async (id: string) => {
     await apiFetch(`/gerencial/transfers/${id}`, { method: "DELETE" });
-    load();
+    invalidateFluxo();
+    load(true);
     onChanged?.();
   };
 
@@ -2898,9 +3071,7 @@ function TransfersSection({ month, onChanged }: { month: string; onChanged?: () 
       {/* Lista */}
       {error && <p className="px-5 py-3 text-sm text-danger">{error}</p>}
       {loading && !items ? (
-        <div className="flex justify-center py-8">
-          <Loader2 className="h-5 w-5 animate-spin text-primary" />
-        </div>
+        <SectionSkeleton rows={2} />
       ) : items && items.length > 0 ? (
         <ul className="divide-y divide-border">
           {items.map((it) => (
