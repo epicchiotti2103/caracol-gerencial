@@ -280,7 +280,7 @@ function FechamentoMes() {
           )}
 
           {dashboard?.alertas_double_count && dashboard.alertas_double_count.length > 0 && (
-            <DoubleCountAlerts alertas={dashboard.alertas_double_count} />
+            <DoubleCountAlerts alertas={dashboard.alertas_double_count} month={month} />
           )}
 
           {items && (
@@ -932,7 +932,7 @@ function MoedaLinha({ moeda, m }: { moeda: Moeda; m: ResultadoAnualMoeda }) {
 
 /* Alerta informativo: NF com competencia no mes sem vinculo com a campanha
    (fechamento travado continua contando o publisher como a pagar + a NF entra de novo) */
-function DoubleCountAlerts({ alertas }: { alertas: AlertaDoubleCount[] }) {
+function DoubleCountAlerts({ alertas, month }: { alertas: AlertaDoubleCount[]; month: string }) {
   return (
     <div className="mb-8 rounded-xl border border-amber-400/30 bg-amber-400/5 p-5">
       <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
@@ -949,7 +949,7 @@ function DoubleCountAlerts({ alertas }: { alertas: AlertaDoubleCount[] }) {
           </div>
         </div>
         <a
-          href="https://nf.aeobr.com.br"
+          href={`https://nf.aeobr.com.br/sugestoes-vinculo?month=${month}`}
           target="_blank"
           rel="noopener noreferrer"
           className="rounded-lg border border-amber-400/30 px-3 py-1.5 text-xs font-medium text-amber-300 hover:bg-amber-400/10"
