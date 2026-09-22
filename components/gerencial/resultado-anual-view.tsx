@@ -1,16 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertCircle, Loader2, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertCircle, RefreshCw } from "lucide-react";
 import { apiFetch } from "@/lib/api";
-import type { DashboardResponse, FxRatesResponse } from "@/types";
+import type { DashboardResponse, FxRatesResponse, ResultadoAnualMoeda, ResultadoAnualResponse } from "@/types";
 import { currentYear, formatCurrency, formatMonthLabel } from "@/lib/format";
 
 /* ============================================================
    ABA 3 — RESULTADO ANUAL (competência, tudo em R$)
    ============================================================
-   Mesmo eixo e mesma fonte do Fechamento > Mês: 1 GET /gerencial/dashboard?month=
-   por mês (jan..dez, a partir de RESULTADO_INICIO). Entradas = recebido + a receber, saídas = pago + a pagar,
+   Mesmo eixo e mesma fonte do Fechamento > Mês. Fonte: 1 GET agregado
+   /gerencial/resultado-anual?year=&from= (mesmos campos brl/usd do dashboard, por
+   mês, + fx); se a rota falhar, fallback pra 1 GET /gerencial/dashboard?month= por
+   mês + /gerencial/fx-rates em paralelo (jan..dez, a partir de RESULTADO_INICIO).
+   Cache em memória por ano. Entradas = recebido + a receber, saídas = pago + a pagar,
    exatamente os números do card "Resultado do mês" — as regras anti-double-count
    (NF vinculada assume o fechamento, recusada/cancelada fora, split Talent/Wave)
    ficam todas no backend, nada é recalculado aqui.
@@ -54,40 +57,108 @@ function yearOptions(): number[] {
   return out;
 }
 
+// Dado bruto de um ano: por mês os 4 campos brl/usd + cotação PRÓPRIA do mês
+// (null = sem cotação cadastrada ou herdada => fallback).
+interface MesBruto {
+  month: string;
+  brl: ResultadoAnualMoeda;
+  usd: ResultadoAnualMoeda;
+}
+interface AnoBruto {
+  months: MesBruto[];
+  rates: Record<string, number | null>;
+}
+
+// Cache em memória por ano (vive enquanto a aba do browser estiver aberta).
+// Trocar de ano e voltar não refaz fetch; o botão Atualizar ignora o cache.
+const cacheAno = new Map<number, AnoBruto>();
+
+function ratesFromFx(fx: { month: string; usd_brl: number | null; inherited: boolean }[]) {
+  // Só a cotação cadastrada no PRÓPRIO mês vale; herdada => fallback.
+  const map: Record<string, number | null> = {};
+  for (const r of fx) if (r.month >= RESULTADO_INICIO) map[r.month] = r.inherited ? null : r.usd_brl;
+  return map;
+}
+
+// Caminho rápido: 1 chamada agregada. Lança erro se a rota não existir (404)
+// ou vier num formato inesperado — aí o chamador cai no fallback.
+async function loadAgregado(year: number, months: string[]): Promise<AnoBruto> {
+  const from = months[0];
+  const r = (await apiFetch(`/gerencial/resultado-anual?year=${year}&from=${from}`)) as ResultadoAnualResponse;
+  if (!r || !Array.isArray(r.months) || !Array.isArray(r.fx)) throw new Error("resposta inesperada");
+  const byMonth = new Map(r.months.map((m) => [m.month, m]));
+  // Garante o mesmo conjunto/ordem de meses do caminho antigo.
+  const out: MesBruto[] = months.map((m) => {
+    const d = byMonth.get(m);
+    if (!d || !d.brl || !d.usd) throw new Error(`mês ${m} ausente na resposta`);
+    return { month: m, brl: d.brl, usd: d.usd };
+  });
+  return { months: out, rates: ratesFromFx(r.fx) };
+}
+
+// Fallback: caminho antigo (1 /dashboard por mês), com fx buscado EM PARALELO.
+async function loadPorMes(year: number, months: string[]): Promise<AnoBruto> {
+  const fxP = (apiFetch(`/gerencial/fx-rates?start=${year}-01&months_ahead=11`) as Promise<FxRatesResponse>)
+    .then((fx) => ratesFromFx(fx.rates))
+    .catch(() => ({}) as Record<string, number | null>);
+  const [ds, rates] = await Promise.all([
+    Promise.all(months.map((m) => apiFetch(`/gerencial/dashboard?month=${m}`) as Promise<DashboardResponse>)),
+    fxP
+  ]);
+  return { months: ds.map((d) => ({ month: d.month, brl: d.brl, usd: d.usd })), rates };
+}
+
+async function loadAno(year: number): Promise<AnoBruto> {
+  const months = mesesDoAno(year);
+  if (months.length === 0) return { months: [], rates: {} };
+  try {
+    return await loadAgregado(year, months);
+  } catch (err: any) {
+    if (err?.message === "Sessao expirada") throw err;
+    return loadPorMes(year, months);
+  }
+}
+
 export function ResultadoAnualTab() {
   const years = yearOptions();
   const [year, setYear] = useState(years.includes(currentYear()) ? currentYear() : years[0]);
-  const [dashboards, setDashboards] = useState<DashboardResponse[] | null>(null);
-  const [rates, setRates] = useState<Record<string, number | null>>({});
+  const [data, setData] = useState<AnoBruto | null>(() => cacheAno.get(year) ?? null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const reqId = useRef(0);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const months = mesesDoAno(year);
-      const ds = await Promise.all(months.map((m) => apiFetch(`/gerencial/dashboard?month=${m}`)));
-      setDashboards(ds as DashboardResponse[]);
-      // Só a cotação cadastrada no PRÓPRIO mês vale; herdada => fallback.
-      try {
-        const fx = (await apiFetch(`/gerencial/fx-rates?start=${year}-01&months_ahead=11`)) as FxRatesResponse;
-        const map: Record<string, number | null> = {};
-        for (const r of fx.rates) if (r.month >= RESULTADO_INICIO) map[r.month] = r.inherited ? null : r.usd_brl;
-        setRates(map);
-      } catch {
-        setRates({});
+  const load = useCallback(
+    async (force = false) => {
+      const id = ++reqId.current;
+      const cached = force ? undefined : cacheAno.get(year);
+      if (cached) {
+        setData(cached);
+        setError("");
+        setLoading(false);
+        return;
       }
-    } catch (err: any) {
-      setError(err?.message || "Falha ao carregar.");
-    } finally {
-      setLoading(false);
-    }
-  }, [year]);
+      setLoading(true);
+      setError("");
+      if (!force) setData(null);
+      try {
+        const d = await loadAno(year);
+        cacheAno.set(year, d);
+        if (id === reqId.current) setData(d);
+      } catch (err: any) {
+        if (id === reqId.current) setError(err?.message || "Falha ao carregar.");
+      } finally {
+        if (id === reqId.current) setLoading(false);
+      }
+    },
+    [year]
+  );
 
   useEffect(() => {
     load();
   }, [load]);
+
+  const dashboards = data?.months ?? null;
+  const rates = data?.rates ?? {};
 
   const meses: MesResultado[] = useMemo(() => {
     if (!dashboards) return [];
@@ -147,7 +218,7 @@ export function ResultadoAnualTab() {
             ))}
           </select>
           <button
-            onClick={load}
+            onClick={() => load(true)}
             disabled={loading}
             className="rounded-lg border border-border bg-surface p-2 text-muted hover:bg-surface/80 disabled:opacity-50"
             title="Atualizar"
@@ -165,9 +236,7 @@ export function ResultadoAnualTab() {
       )}
 
       {loading && !dashboards ? (
-        <div className="flex justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-primary" />
-        </div>
+        <ResultadoSkeleton />
       ) : (
         meses.length > 0 && (
           <>
@@ -215,6 +284,40 @@ export function ResultadoAnualTab() {
         )
       )}
     </>
+  );
+}
+
+function ResultadoSkeleton() {
+  const bar = "animate-pulse rounded bg-border/60";
+  return (
+    <div aria-busy="true" aria-label="Carregando resultado anual">
+      <div className="mb-6 grid gap-4 md:grid-cols-3">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="rounded-xl border border-border bg-surface p-5">
+            <div className={`${bar} h-3 w-24`} />
+            <div className={`${bar} mt-3 h-6 w-36`} />
+          </div>
+        ))}
+      </div>
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="mb-6 rounded-xl border border-border bg-surface">
+          <div className="border-b border-border px-5 py-4">
+            <div className={`${bar} h-4 w-40`} />
+            <div className={`${bar} mt-2 h-3 w-64`} />
+          </div>
+          <div className="flex h-[200px] items-end gap-4 p-5">
+            {[55, 80, 40, 70, 30, 60, 45, 75].map((h, j) => (
+              <div key={j} className={`${bar} flex-1`} style={{ height: `${h}%` }} />
+            ))}
+          </div>
+        </div>
+      ))}
+      <div className="rounded-xl border border-border bg-surface p-5">
+        {[0, 1, 2, 3, 4].map((i) => (
+          <div key={i} className={`${bar} mb-3 h-4 w-full last:mb-0`} />
+        ))}
+      </div>
+    </div>
   );
 }
 

@@ -288,3 +288,19 @@ export interface ReconciliationResponse {
   brl: ReconciliationMoeda;
   usd: ReconciliationMoeda;
 }
+
+// GET /gerencial/resultado-anual?year=&from= — agregado do "Resultado anual".
+// Os 4 campos por moeda sao identicos aos de /gerencial/dashboard?month= (brl/usd).
+export interface ResultadoAnualMoeda {
+  recebido_mes: number;
+  a_receber: number;
+  pago_mes: number;
+  a_pagar: number;
+}
+
+export interface ResultadoAnualResponse {
+  year: number;
+  from: string; // YYYY-MM
+  months: { month: string; brl: ResultadoAnualMoeda; usd: ResultadoAnualMoeda }[];
+  fx: { month: string; usd_brl: number | null; inherited: boolean }[];
+}
