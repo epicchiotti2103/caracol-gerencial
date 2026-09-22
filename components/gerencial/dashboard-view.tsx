@@ -37,7 +37,11 @@ import type {
   EditStamp,
   SaldoContas,
   Transfer,
-  TransfersResponse
+  TransfersResponse,
+  Grupo,
+  GruposResultado,
+  AlertaDoubleCount,
+  ResultadoAnualMoeda
 } from "@/types";
 import {
   formatCurrency,
@@ -152,6 +156,8 @@ function FechamentoMes() {
   const [error, setError] = useState("");
 
   const [detalheMoeda, setDetalheMoeda] = useState<Moeda>("BRL");
+  const [detalheGrupo, setDetalheGrupo] = useState<Grupo | "todos">("todos");
+  const [showPorMoeda, setShowPorMoeda] = useState(false);
 
   const [expandedBrlReceber, setExpandedBrlReceber] = useState(false);
   const [expandedBrlPagar, setExpandedBrlPagar] = useState(false);
@@ -223,7 +229,21 @@ function FechamentoMes() {
         </div>
       ) : (
         <>
-          {dashboard && (
+          {dashboard?.grupos && (
+            <GruposBlocos grupos={dashboard.grupos} rate={fxRate?.usd_brl ?? null} />
+          )}
+
+          {dashboard?.grupos && (
+            <button
+              onClick={() => setShowPorMoeda(!showPorMoeda)}
+              className="mb-4 flex items-center gap-1 text-xs text-muted hover:text-foreground"
+            >
+              {showPorMoeda ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              Ver por moeda (Caracol BR / Caracol LLC)
+            </button>
+          )}
+
+          {dashboard && (!dashboard.grupos || showPorMoeda) && (
             <div className="mb-8 grid gap-4 md:grid-cols-2">
               <MoedaCard
                 title="Caracol BR (R$)"
@@ -254,12 +274,23 @@ function FechamentoMes() {
                 usdNet={netOf(dashboard.usd)}
                 fxRate={fxRate}
                 onRateSaved={load}
+                grupos={dashboard.grupos}
               />
             </div>
           )}
 
+          {dashboard?.alertas_double_count && dashboard.alertas_double_count.length > 0 && (
+            <DoubleCountAlerts alertas={dashboard.alertas_double_count} />
+          )}
+
           {items && (
-            <MonthItemsBreakdown items={items} moeda={detalheMoeda} onMoedaChange={setDetalheMoeda} />
+            <MonthItemsBreakdown
+              items={items}
+              moeda={detalheMoeda}
+              onMoedaChange={setDetalheMoeda}
+              grupo={detalheGrupo}
+              onGrupoChange={setDetalheGrupo}
+            />
           )}
         </>
       )}
@@ -638,13 +669,15 @@ function ConsolidatedMonthCard({
   brlNet,
   usdNet,
   fxRate,
-  onRateSaved
+  onRateSaved,
+  grupos
 }: {
   month: string;
   brlNet: number;
   usdNet: number;
   fxRate: FxRate | null;
   onRateSaved: () => void;
+  grupos?: GruposResultado;
 }) {
   const [rateInput, setRateInput] = useState("");
   const [saving, setSaving] = useState(false);
@@ -682,7 +715,9 @@ function ConsolidatedMonthCard({
     <div className="rounded-xl border border-primary/30 bg-surface p-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h3 className="text-sm font-semibold text-foreground">Resultado consolidado (R$)</h3>
+          <h3 className="text-sm font-semibold text-foreground">
+            {grupos ? "Resultado do mês (Mobile + Talent + Empresa)" : "Resultado consolidado (R$)"}
+          </h3>
           <p className="text-xs text-muted">
             Soma os dois lados convertendo o US$ pela cotação do mês. Responde como o mês realmente fechou.
           </p>
@@ -733,6 +768,16 @@ function ConsolidatedMonthCard({
             >
               {formatCurrency(consolidado, "BRL")}
             </span>
+            {grupos && rate != null ? (
+              <p className="mt-1 text-xs text-muted">
+                {GRUPOS.map((g, i) => (
+                  <span key={g.key}>
+                    {i > 0 && " + "}
+                    {g.label} {formatCurrency(grupoNetBrl(grupoOf(grupos, g.key), rate), "BRL")}
+                  </span>
+                ))}
+              </p>
+            ) : null}
             <p className="mt-1 text-xs text-muted">
               {formatCurrency(brlNet, "BRL")} + {formatCurrency(usdNet, "USD")} ×{" "}
               {rate?.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
@@ -742,6 +787,192 @@ function ConsolidatedMonthCard({
           <span className="text-sm text-muted">Informe a cotação pra consolidar.</span>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ---- Blocos Mobile / Talent / Empresa (quando o backend manda `grupos`) ---- */
+
+const GRUPOS: Array<{ key: Grupo; label: string; desc: string }> = [
+  {
+    key: "mobile",
+    label: "Mobile",
+    desc: "Campanhas: entra custo reembolsado + LL Caracol, sai pagamento de publisher"
+  },
+  { key: "talent", label: "Talent", desc: "NFs com tag Talent: margem, repasse e imposto" },
+  { key: "empresa", label: "Empresa", desc: "Salário, custos fixos, avulsos e o resto" }
+];
+
+type GrupoMoedas = { brl: ResultadoAnualMoeda; usd: ResultadoAnualMoeda };
+
+function entradasOf(m: ResultadoAnualMoeda): number {
+  return m.recebido_mes + m.a_receber;
+}
+
+function saidasOf(m: ResultadoAnualMoeda): number {
+  return m.pago_mes + m.a_pagar;
+}
+
+// Net do bloco em R$: lado USD convertido pela mesma cotacao do card consolidado
+const ZERO_MOEDA: ResultadoAnualMoeda = { recebido_mes: 0, a_receber: 0, pago_mes: 0, a_pagar: 0 };
+
+// Tolerante a payload parcial do backend (grupo ou moeda ausente = zero)
+function grupoOf(grupos: GruposResultado, key: Grupo): GrupoMoedas {
+  const g = grupos[key];
+  return { brl: { ...ZERO_MOEDA, ...(g?.brl ?? {}) }, usd: { ...ZERO_MOEDA, ...(g?.usd ?? {}) } };
+}
+
+function grupoNetBrl(g: GrupoMoedas, rate: number): number {
+  return entradasOf(g.brl) - saidasOf(g.brl) + (entradasOf(g.usd) - saidasOf(g.usd)) * rate;
+}
+
+function GruposBlocos({ grupos, rate }: { grupos: GruposResultado; rate: number | null }) {
+  const total =
+    rate != null ? GRUPOS.reduce((s, g) => s + grupoNetBrl(grupoOf(grupos, g.key), rate), 0) : null;
+  return (
+    <div className="mb-4 space-y-4">
+      <div className="grid gap-4 md:grid-cols-3">
+        {GRUPOS.map((g) => (
+          <GrupoBloco key={g.key} label={g.label} desc={g.desc} data={grupoOf(grupos, g.key)} rate={rate} />
+        ))}
+      </div>
+      {rate == null && (
+        <p className="text-xs text-amber-300">
+          Sem cotação do mês: os blocos mostram só o detalhe por moeda. Informe a cotação abaixo pra consolidar em R$.
+        </p>
+      )}
+      {total != null && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-surface px-5 py-3">
+          <span className="text-sm text-muted">Soma dos 3 blocos (R$)</span>
+          <span className={`font-mono text-base font-semibold ${total >= 0 ? "text-sky-300" : "text-danger"}`}>
+            {formatCurrency(total, "BRL")}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GrupoBloco({
+  label,
+  desc,
+  data,
+  rate
+}: {
+  label: string;
+  desc: string;
+  data: GrupoMoedas;
+  rate: number | null;
+}) {
+  const entradas = rate != null ? entradasOf(data.brl) + entradasOf(data.usd) * rate : null;
+  const saidas = rate != null ? saidasOf(data.brl) + saidasOf(data.usd) * rate : null;
+  const net = entradas != null && saidas != null ? entradas - saidas : null;
+  const temUsd = entradasOf(data.usd) !== 0 || saidasOf(data.usd) !== 0;
+  const temBrl = entradasOf(data.brl) !== 0 || saidasOf(data.brl) !== 0;
+
+  return (
+    <div className="flex flex-col rounded-xl border border-border bg-surface p-5">
+      <div className="mb-3">
+        <h3 className="text-sm font-semibold text-foreground">{label}</h3>
+        <p className="text-xs text-muted">{desc}</p>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted">Entradas</span>
+          <span className="font-mono text-emerald-300">
+            {entradas != null ? formatCurrency(entradas, "BRL") : "—"}
+          </span>
+        </div>
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted">Saídas</span>
+          <span className="font-mono text-danger">{saidas != null ? formatCurrency(saidas, "BRL") : "—"}</span>
+        </div>
+      </div>
+
+      <div className="mt-3 border-t border-border pt-3">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-semibold text-foreground">Resultado</span>
+          {net != null ? (
+            <span className={`font-mono text-base font-semibold ${net >= 0 ? "text-sky-300" : "text-danger"}`}>
+              {formatCurrency(net, "BRL")}
+            </span>
+          ) : (
+            <span className="text-xs text-muted">sem cotação</span>
+          )}
+        </div>
+      </div>
+
+      {/* Detalhe por moeda (secundario) */}
+      <div className="mt-3 space-y-1 border-t border-border pt-3 text-[11px] text-muted">
+        {!temBrl && !temUsd && <p>Nada neste bloco no mês.</p>}
+        {temBrl && <MoedaLinha moeda="BRL" m={data.brl} />}
+        {temUsd && <MoedaLinha moeda="USD" m={data.usd} />}
+      </div>
+    </div>
+  );
+}
+
+function MoedaLinha({ moeda, m }: { moeda: Moeda; m: ResultadoAnualMoeda }) {
+  return (
+    <p
+      className="flex flex-wrap justify-between gap-x-2"
+      title={`Recebido ${formatCurrency(m.recebido_mes, moeda)} · a receber ${formatCurrency(
+        m.a_receber,
+        moeda
+      )} · pago ${formatCurrency(m.pago_mes, moeda)} · a pagar ${formatCurrency(m.a_pagar, moeda)}`}
+    >
+      <span>{moeda === "BRL" ? "R$" : "US$"}</span>
+      <span className="font-mono">
+        +{formatCurrency(entradasOf(m), moeda)} / −{formatCurrency(saidasOf(m), moeda)}
+      </span>
+    </p>
+  );
+}
+
+/* Alerta informativo: NF com competencia no mes sem vinculo com a campanha
+   (fechamento travado continua contando o publisher como a pagar + a NF entra de novo) */
+function DoubleCountAlerts({ alertas }: { alertas: AlertaDoubleCount[] }) {
+  return (
+    <div className="mb-8 rounded-xl border border-amber-400/30 bg-amber-400/5 p-5">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-2">
+          <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-300" />
+          <div>
+            <h3 className="text-sm font-semibold text-amber-300">
+              Possível dívida contada 2x ({alertas.length})
+            </h3>
+            <p className="text-xs text-muted">
+              NF a pagar com competência no mês, mas sem vínculo com a campanha: o fechamento e a NF entram os dois
+              no a pagar. Informativo, não muda os totais. Vincule a NF à campanha no app NF.
+            </p>
+          </div>
+        </div>
+        <a
+          href="https://nf.aeobr.com.br"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="rounded-lg border border-amber-400/30 px-3 py-1.5 text-xs font-medium text-amber-300 hover:bg-amber-400/10"
+        >
+          ver sugestões de vínculo
+        </a>
+      </div>
+      <ul className="space-y-1.5">
+        {alertas.map((a) => (
+          <li
+            key={`${a.invoice_id}-${a.campanha_id}`}
+            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 py-2 text-xs"
+          >
+            <span className="text-foreground">
+              {a.supplier_name || "Fornecedor"} · {a.campanha_name || "Campanha"}
+              <span className="text-muted"> · NF {a.invoice_number || "s/ nº"}</span>
+            </span>
+            <span className="font-mono text-muted">
+              NF {formatCurrency(a.valor_nf, a.moeda)} · fechamento {formatCurrency(a.valor_fechamento, a.moeda)}
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -784,13 +1015,22 @@ function sourceLabel(source: string): string {
 function MonthItemsBreakdown({
   items,
   moeda,
-  onMoedaChange
+  onMoedaChange,
+  grupo,
+  onGrupoChange
 }: {
   items: DashboardItem[];
   moeda: Moeda;
   onMoedaChange: (m: Moeda) => void;
+  grupo: Grupo | "todos";
+  onGrupoChange: (g: Grupo | "todos") => void;
 }) {
-  const ofMoeda = items.filter((it) => it.moeda === moeda);
+  // Filtro por bloco so aparece quando o backend ja manda `grupo` nos itens
+  const temGrupo = items.some((it) => it.grupo);
+  const grupoAtivo = temGrupo ? grupo : "todos";
+  const ofMoeda = items.filter(
+    (it) => it.moeda === moeda && (grupoAtivo === "todos" || it.grupo === grupoAtivo)
+  );
   const groups: Array<{ key: string; title: string; accent: string; list: DashboardItem[] }> = [
     {
       key: "recebido",
@@ -825,6 +1065,24 @@ function MonthItemsBreakdown({
           <h2 className="text-sm font-semibold text-foreground">Detalhamento do mês</h2>
           <p className="text-xs text-muted">Quais títulos compõem cada valor do mês de referência.</p>
         </div>
+        <div className="flex flex-wrap items-center gap-3">
+          {temGrupo && (
+            <div className="flex items-center gap-1">
+              {([{ key: "todos", label: "Todos" }, ...GRUPOS] as Array<{ key: Grupo | "todos"; label: string }>).map(
+                (g) => (
+                  <button
+                    key={g.key}
+                    onClick={() => onGrupoChange(g.key)}
+                    className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                      grupoAtivo === g.key ? "bg-primary text-black" : "bg-background text-muted hover:text-foreground"
+                    }`}
+                  >
+                    {g.label}
+                  </button>
+                )
+              )}
+            </div>
+          )}
         <div className="flex items-center gap-1">
           {(["BRL", "USD"] as Moeda[]).map((m) => (
             <button
@@ -838,10 +1096,12 @@ function MonthItemsBreakdown({
             </button>
           ))}
         </div>
+        </div>
       </div>
       {ofMoeda.length === 0 ? (
         <p className="px-5 py-8 text-center text-sm text-muted">
-          Nenhum título em {moeda === "BRL" ? "R$" : "US$"} neste mês.
+          Nenhum título em {moeda === "BRL" ? "R$" : "US$"}
+          {grupoAtivo !== "todos" && ` no bloco ${GRUPOS.find((g) => g.key === grupoAtivo)?.label}`} neste mês.
         </p>
       ) : (
         <div className="grid gap-x-6 gap-y-6 p-5 md:grid-cols-2">
@@ -897,6 +1157,7 @@ function ItemGroup({
                     )}
                   </div>
                   <p className="text-xs text-muted">
+                    {it.grupo && <span>{GRUPOS.find((g) => g.key === it.grupo)?.label ?? it.grupo} · </span>}
                     {sourceLabel(it.source)}
                     {it.due_date && <span> · vence {it.due_date}</span>}
                   </p>

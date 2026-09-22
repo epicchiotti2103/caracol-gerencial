@@ -93,11 +93,33 @@ export interface SaldoContas {
   usd: SaldoContasMoeda;
 }
 
+// Blocos do fechamento: mobile (tudo do Campanhas), talent (NFs com tag Talent),
+// empresa (salario, avulsos, resto). Opcional: backend pode ainda nao expor.
+export type Grupo = "mobile" | "talent" | "empresa";
+
+export type GruposResultado = Record<Grupo, { brl: ResultadoAnualMoeda; usd: ResultadoAnualMoeda }>;
+
+// Par fornecedor/campanha em que a divida pode estar contada 2x (informativo)
+export interface AlertaDoubleCount {
+  supplier_id: string;
+  supplier_name?: string | null;
+  campanha_id: string;
+  campanha_name?: string | null;
+  mes: string;
+  invoice_id: string;
+  invoice_number?: string | null;
+  valor_nf: number;
+  valor_fechamento: number;
+  moeda: Moeda;
+}
+
 export interface DashboardResponse {
   month: string; // YYYY-MM
   brl: DashboardMoeda;
   usd: DashboardMoeda;
   saldo_contas?: SaldoContas;
+  grupos?: GruposResultado;
+  alertas_double_count?: AlertaDoubleCount[];
 }
 
 export interface ForecastMonth {
@@ -132,11 +154,13 @@ export interface DashboardItem {
   campanha_name?: string | null;
   publisher?: string | null; // nome do publisher (lado a pagar)
   supplier_id?: string | null;
+  grupo?: Grupo;
 }
 
 export interface DashboardItemsResponse {
   month: string; // YYYY-MM
   items: DashboardItem[];
+  alertas_double_count?: AlertaDoubleCount[];
 }
 
 // ----- Cashflow / Fluxo de caixa por vencimento (Etapa 4.3) -----
@@ -301,6 +325,6 @@ export interface ResultadoAnualMoeda {
 export interface ResultadoAnualResponse {
   year: number;
   from: string; // YYYY-MM
-  months: { month: string; brl: ResultadoAnualMoeda; usd: ResultadoAnualMoeda }[];
+  months: { month: string; brl: ResultadoAnualMoeda; usd: ResultadoAnualMoeda; grupos?: GruposResultado }[];
   fx: { month: string; usd_brl: number | null; inherited: boolean }[];
 }
