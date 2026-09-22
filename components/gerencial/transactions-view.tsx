@@ -377,6 +377,7 @@ export function TransactionsView() {
       {editing !== undefined && (
         <TransactionEditModal
           transaction={editing}
+          defaultMonth={month}
           onClose={() => setEditing(undefined)}
           onSaved={editing === null ? onCreated : onSaved}
         />

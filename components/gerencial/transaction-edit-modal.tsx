@@ -16,22 +16,23 @@ import {
   sanitizeNumberInput,
   blurFormatNumberPtBr,
   buildMonthOptions,
-  currentYearMonth
+  currentYearMonth,
+  formatMonthLabel
 } from "@/lib/format";
 import { contasOf, CONTA_DEFAULT, isContaValid } from "@/lib/contas";
 
 interface Props {
   transaction: GerencialTransaction | null; // null = criar
+  defaultMonth?: string; // YYYY-MM selecionado na lista; default do mes de referencia ao criar
   onClose: () => void;
   onSaved: (t: GerencialTransaction) => void;
 }
 
 const CATEGORIES = ["Fixo", "Variável", "Salário"];
 
-export function TransactionEditModal({ transaction, onClose, onSaved }: Props) {
+export function TransactionEditModal({ transaction, defaultMonth, onClose, onSaved }: Props) {
   const isEdit = !!transaction;
   const toast = useToast();
-  const monthOpts = buildMonthOptions();
 
   const [kind, setKind] = useState<TransactionKind>(transaction?.kind || "despesa");
   const [category, setCategory] = useState(transaction?.category || "Fixo");
@@ -51,9 +52,23 @@ export function TransactionEditModal({ transaction, onClose, onSaved }: Props) {
     if (!isContaValid(m, conta)) setConta(CONTA_DEFAULT[m]);
   };
   const [referenceMonth, setReferenceMonth] = useState(
-    (transaction?.reference_month || "").slice(0, 7) || currentYearMonth()
+    (transaction?.reference_month || "").slice(0, 7) || defaultMonth || currentYearMonth()
   );
+  // true quando o user escolheu o mes de referencia na mao -> vencimento para de sincronizar
+  const [refTouched, setRefTouched] = useState(false);
   const [dueDate, setDueDate] = useState((transaction?.due_date || "").slice(0, 10));
+  const monthOpts = buildMonthOptions([referenceMonth, defaultMonth]);
+
+  const changeDueDate = (v: string) => {
+    setDueDate(v);
+    if (!refTouched && /^\d{4}-\d{2}/.test(v)) setReferenceMonth(v.slice(0, 7));
+  };
+
+  // Mes "de caixa" pra comparar: vencimento; sem vencimento, data de pagamento (se ja pago)
+  const anchorDate = dueDate || (transaction?.paid_at || "").slice(0, 10);
+  const anchorMonth = anchorDate.slice(0, 7);
+  const anchorLabel = dueDate ? "vencimento" : "pagamento";
+  const refMismatch = !!anchorMonth && anchorMonth !== referenceMonth;
   const [notes, setNotes] = useState(transaction?.notes || "");
   const [recurring, setRecurring] = useState(transaction?.recurring ?? false);
 
@@ -229,7 +244,14 @@ export function TransactionEditModal({ transaction, onClose, onSaved }: Props) {
               </div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-foreground">Mês de referência</label>
-                <select value={referenceMonth} onChange={(e) => setReferenceMonth(e.target.value)} className={inputCls}>
+                <select
+                  value={referenceMonth}
+                  onChange={(e) => {
+                    setReferenceMonth(e.target.value);
+                    setRefTouched(true);
+                  }}
+                  className={inputCls}
+                >
                   {monthOpts.map((m) => (
                     <option key={m.value} value={m.value}>
                       {m.label}
@@ -246,7 +268,7 @@ export function TransactionEditModal({ transaction, onClose, onSaved }: Props) {
                 <input
                   type="date"
                   value={dueDate}
-                  onChange={(e) => setDueDate(e.target.value)}
+                  onChange={(e) => changeDueDate(e.target.value)}
                   className={inputCls}
                 />
               </div>
@@ -262,6 +284,27 @@ export function TransactionEditModal({ transaction, onClose, onSaved }: Props) {
                 </label>
               </div>
             </div>
+
+            {refMismatch && (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+                <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-300" />
+                <p className="text-xs text-amber-200">
+                  Mês de referência ({formatMonthLabel(referenceMonth)}) diferente do mês do {anchorLabel} (
+                  {formatMonthLabel(anchorMonth)}). A transação entra na competência de{" "}
+                  {formatMonthLabel(referenceMonth)}.{" "}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReferenceMonth(anchorMonth);
+                      setRefTouched(false);
+                    }}
+                    className="font-semibold underline hover:text-amber-100"
+                  >
+                    Usar {formatMonthLabel(anchorMonth)}
+                  </button>
+                </p>
+              </div>
+            )}
 
             {/* Notas */}
             <div>

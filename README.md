@@ -7,6 +7,7 @@ App de controle financeiro interno da Caracol. Etapa 4 do eixo financeiro (apos 
 - **Cadastro de transacoes** que nao estao em outras fontes:
   - Despesas: salario, custo fixo, avulsos
   - Receitas: parceiro sem nota, avulsas
+  - **Mês de referência (competência)**: no form, nasce no mês selecionado na lista (não no mês corrente) e acompanha o vencimento enquanto o user não escolher o mês na mão. Aviso âmbar quando ref ≠ mês do vencimento (ou do pagamento, se sem vencimento). Dropdown de meses vai de jan/2026 (ou 12 meses atrás) até +12. "Marcar pago" sugere o vencimento como data (senão hoje).
 - **Dashboard com três visões** agregando 4 fontes (`nf_invoices`, `nf_receivables`, `campanhas_fechamento_mensal`, `gerencial_transactions`), por moeda (BRL/USD):
   - **Fechamento (competência)** — "o mês fechou no azul?". Tudo que pertence ao período de referência, independente de quando o dinheiro entra/sai. Tem um toggle **Mês / Ano**:
     - **Mês**: cards por moeda (recebido/pago, a receber/a pagar com breakdown expansível, **Resultado do mês = entradas − saídas**) + seção **"Detalhamento do mês"** que lista os títulos individuais (qual NF/transação/fechamento compõe cada bucket). Consome `/gerencial/dashboard?month=` e `/gerencial/dashboard/items?month=`.

@@ -65,16 +65,33 @@ export function currentYearMonth(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
-// Gera lista de meses pra dropdown (3 atras, atual, 12 a frente)
-export function buildMonthOptions(): { value: string; label: string }[] {
-  const out: { value: string; label: string }[] = [];
+// Gera lista de meses pra dropdown: desde jan/2026 (ou 12 meses atras, o que
+// for mais antigo) ate 12 a frente. `ensure` injeta meses fora da faixa (ex:
+// reference_month antigo de uma transacao em edicao) pra o select nao perder o valor.
+export function buildMonthOptions(ensure: (string | null | undefined)[] = []): { value: string; label: string }[] {
   const now = new Date();
-  for (let i = -3; i <= 12; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
-    const v = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    out.push({ value: v, label: formatMonthLabel(v) });
+  const start = new Date(Math.min(
+    new Date(2026, 0, 1).getTime(),
+    new Date(now.getFullYear(), now.getMonth() - 12, 1).getTime()
+  ));
+  const end = new Date(now.getFullYear(), now.getMonth() + 12, 1);
+  const values = new Set<string>();
+  for (let d = start; d <= end; d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) {
+    values.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
   }
-  return out;
+  for (const e of ensure) {
+    const m = (e || "").match(/^\d{4}-\d{2}/);
+    if (m) values.add(m[0]);
+  }
+  return Array.from(values)
+    .sort()
+    .map((v) => ({ value: v, label: formatMonthLabel(v) }));
+}
+
+// Data de hoje em YYYY-MM-DD no fuso local (toISOString usa UTC e vira o dia a noite)
+export function todayLocalIso(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 export function currentYear(): number {

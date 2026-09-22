@@ -5,7 +5,7 @@ import { X, AlertCircle, Upload } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useToast } from "@/lib/toast-context";
 import type { GerencialTransaction } from "@/types";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatMonthLabel, todayLocalIso } from "@/lib/format";
 
 interface Props {
   transaction: GerencialTransaction;
@@ -20,9 +20,15 @@ export function TransactionMarkPaidModal({ transaction, onClose, onSaved }: Prop
   const toast = useToast();
   const [proof, setProof] = useState<File | null>(null);
   const [paidAt, setPaidAt] = useState(
-    // Se já pago, prefill com a data registrada; senão hoje
-    transaction.paid_at ? transaction.paid_at.slice(0, 10) : new Date().toISOString().slice(0, 10)
+    // Se já pago, prefill com a data registrada; senão vencimento; senão hoje
+    transaction.paid_at
+      ? transaction.paid_at.slice(0, 10)
+      : (transaction.due_date || "").slice(0, 10) || todayLocalIso()
   );
+  const refMonth = (transaction.reference_month || "").slice(0, 7);
+  const paidMonth = paidAt.slice(0, 7);
+  // Sem vencimento, o mes de pagamento e a ancora; avisa se destoa da competencia
+  const refMismatch = !transaction.due_date && !!refMonth && !!paidMonth && paidMonth !== refMonth;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -94,6 +100,12 @@ export function TransactionMarkPaidModal({ transaction, onClose, onSaved }: Prop
               onChange={(e) => setPaidAt(e.target.value)}
               className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary/60"
             />
+            {refMismatch && (
+              <p className="mt-1.5 text-xs text-amber-300">
+                Mês de referência da transação é {formatMonthLabel(refMonth)}; pagamento em{" "}
+                {formatMonthLabel(paidMonth)}. Pra mudar a competência, edite a transação.
+              </p>
+            )}
           </div>
 
           <div>
