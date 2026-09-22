@@ -350,9 +350,29 @@ export interface ResultadoAnualMoeda {
   a_pagar: number;
 }
 
+// Status do mês no Resultado anual (backend: tracker slug resultado-anual-previsao).
+// Opcional: enquanto o backend não mandar, o front deduz "em_andamento" pelo mês corrente.
+export type ResultadoAnualStatus = "fechado" | "previsao" | "em_andamento";
+
+// Previsão de Campanhas ainda sem fechamento, somada ao valor real do mês.
+export interface ResultadoAnualPrevisao {
+  brl: { a_receber: number; a_pagar: number };
+  usd: { a_receber: number; a_pagar: number };
+  campanhas: { campaign_id: string; campaign_name: string }[];
+}
+
+export interface ResultadoAnualMes {
+  month: string;
+  brl: ResultadoAnualMoeda;
+  usd: ResultadoAnualMoeda;
+  grupos?: GruposResultado;
+  status?: ResultadoAnualStatus;
+  previsao?: ResultadoAnualPrevisao | null;
+}
+
 export interface ResultadoAnualResponse {
   year: number;
   from: string; // YYYY-MM
-  months: { month: string; brl: ResultadoAnualMoeda; usd: ResultadoAnualMoeda; grupos?: GruposResultado }[];
+  months: ResultadoAnualMes[];
   fx: { month: string; usd_brl: number | null; inherited: boolean }[];
 }

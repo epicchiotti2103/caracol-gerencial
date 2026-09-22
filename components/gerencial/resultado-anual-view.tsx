@@ -1,10 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { apiFetch } from "@/lib/api";
-import type { DashboardResponse, FxRatesResponse, ResultadoAnualMoeda, ResultadoAnualResponse } from "@/types";
-import { currentYear, formatCurrency, formatMonthLabel } from "@/lib/format";
+import type {
+  DashboardResponse,
+  FxRatesResponse,
+  ResultadoAnualMoeda,
+  ResultadoAnualPrevisao,
+  ResultadoAnualResponse,
+  ResultadoAnualStatus
+} from "@/types";
+import { currentYear, currentYearMonth, formatCurrency, formatMonthLabel } from "@/lib/format";
 
 /* ============================================================
    ABA 3 — RESULTADO ANUAL (competência, tudo em R$)
@@ -22,7 +29,15 @@ import { currentYear, formatCurrency, formatMonthLabel } from "@/lib/format";
    (gerencial_fx_rates). Mês sem cotação própria usa USD_BRL_FALLBACK e é
    marcado com * na UI. Obs.: o card "Resultado consolidado" do Fechamento herda
    a última cotação conhecida; aqui, por decisão do usuário, cotação herdada
-   NÃO vale — cai no fallback. */
+   NÃO vale — cai no fallback.
+
+   Corte temporal: só entram meses até o mês VIGENTE (futuros não aparecem em
+   nada nem são buscados). O mês corrente é desenhado hachurado ("mês em
+   andamento"). Quando o backend manda `previsao` num mês (Campanhas sem
+   fechamento), ela é somada ao real (mesma cotação) e aparece como segmento
+   tracejado empilhado; o acumulado inclui a previsão e vira tracejado a partir
+   do 1º mês com previsão/em andamento. `status`/`previsao` são opcionais: sem
+   eles, "em andamento" é deduzido pelo mês corrente. */
 
 export const USD_BRL_FALLBACK = 5.6;
 
@@ -32,8 +47,9 @@ export const RESULTADO_INICIO = "2026-05";
 const FIRST_YEAR = Number(RESULTADO_INICIO.slice(0, 4));
 
 function mesesDoAno(year: number): string[] {
+  const vigente = currentYearMonth();
   return Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`).filter(
-    (m) => m >= RESULTADO_INICIO
+    (m) => m >= RESULTADO_INICIO && m <= vigente
   );
 }
 
@@ -45,11 +61,22 @@ interface MesResultado {
   saidaUsd: number;
   rate: number;
   rateFallback: boolean;
-  entrada: number; // R$ (BRL + USD × rate)
+  entrada: number; // R$ (BRL + USD × rate), JÁ inclui previsão
   saida: number;
   net: number;
   acumulado: number;
+  // Parte prevista (R$, já convertida) — 0 quando o backend não manda previsão.
+  prevEntrada: number;
+  prevSaida: number;
+  campanhasPrev: string[];
+  emAndamento: boolean; // mês corrente (status "em_andamento" ou deduzido)
 }
+
+// Parte "real" (sem previsão) de cada série — base do segmento sólido.
+const realEntrada = (m: MesResultado) => m.entrada - m.prevEntrada;
+const realSaida = (m: MesResultado) => m.saida - m.prevSaida;
+const realNet = (m: MesResultado) => realEntrada(m) - realSaida(m);
+const temPrevisao = (m: MesResultado) => m.prevEntrada !== 0 || m.prevSaida !== 0;
 
 function yearOptions(): number[] {
   const out: number[] = [];
@@ -63,6 +90,8 @@ interface MesBruto {
   month: string;
   brl: ResultadoAnualMoeda;
   usd: ResultadoAnualMoeda;
+  status?: ResultadoAnualStatus;
+  previsao?: ResultadoAnualPrevisao | null;
 }
 interface AnoBruto {
   months: MesBruto[];
@@ -91,7 +120,7 @@ async function loadAgregado(year: number, months: string[]): Promise<AnoBruto> {
   const out: MesBruto[] = months.map((m) => {
     const d = byMonth.get(m);
     if (!d || !d.brl || !d.usd) throw new Error(`mês ${m} ausente na resposta`);
-    return { month: m, brl: d.brl, usd: d.usd };
+    return { month: m, brl: d.brl, usd: d.usd, status: d.status, previsao: d.previsao ?? null };
   });
   return { months: out, rates: ratesFromFx(r.fx) };
 }
@@ -163,19 +192,29 @@ export function ResultadoAnualTab() {
   const meses: MesResultado[] = useMemo(() => {
     if (!dashboards) return [];
     let acc = 0;
-    return dashboards.filter((d) => d.month >= RESULTADO_INICIO).map((d) => {
-      const entradaBrl = d.brl.recebido_mes + d.brl.a_receber;
-      const saidaBrl = d.brl.pago_mes + d.brl.a_pagar;
-      const entradaUsd = d.usd.recebido_mes + d.usd.a_receber;
-      const saidaUsd = d.usd.pago_mes + d.usd.a_pagar;
+    const vigente = currentYearMonth();
+    return dashboards.filter((d) => d.month >= RESULTADO_INICIO && d.month <= vigente).map((d) => {
       const own = rates[d.month];
       const rateFallback = own == null;
       const rate = own ?? USD_BRL_FALLBACK;
+      const p = d.previsao;
+      const prevEntrada = p ? (p.brl?.a_receber ?? 0) + (p.usd?.a_receber ?? 0) * rate : 0;
+      const prevSaida = p ? (p.brl?.a_pagar ?? 0) + (p.usd?.a_pagar ?? 0) * rate : 0;
+      // Colunas por moeda da tabela já incluem a previsão (mesma base do total).
+      const entradaBrl = d.brl.recebido_mes + d.brl.a_receber + (p?.brl?.a_receber ?? 0);
+      const saidaBrl = d.brl.pago_mes + d.brl.a_pagar + (p?.brl?.a_pagar ?? 0);
+      const entradaUsd = d.usd.recebido_mes + d.usd.a_receber + (p?.usd?.a_receber ?? 0);
+      const saidaUsd = d.usd.pago_mes + d.usd.a_pagar + (p?.usd?.a_pagar ?? 0);
       const entrada = entradaBrl + entradaUsd * rate;
       const saida = saidaBrl + saidaUsd * rate;
       const net = entrada - saida;
       acc += net;
+      const emAndamento = d.status ? d.status === "em_andamento" : d.month === vigente;
       return {
+        prevEntrada,
+        prevSaida,
+        campanhasPrev: (p?.campanhas ?? []).map((c) => c.campaign_name || c.campaign_id),
+        emAndamento,
         month: d.month,
         entradaBrl,
         saidaBrl,
@@ -194,6 +233,10 @@ export function ResultadoAnualTab() {
   const totEntrada = meses.reduce((s, m) => s + m.entrada, 0);
   const totSaida = meses.reduce((s, m) => s + m.saida, 0);
   const totNet = totEntrada - totSaida;
+  const totPrevEntrada = meses.reduce((s, m) => s + m.prevEntrada, 0);
+  const totPrevSaida = meses.reduce((s, m) => s + m.prevSaida, 0);
+  const totPrevNet = totPrevEntrada - totPrevSaida;
+  const algumaPrevisao = meses.some(temPrevisao);
   const mesesFallback = meses.filter((m) => m.rateFallback && (m.entradaUsd !== 0 || m.saidaUsd !== 0));
 
   return (
@@ -241,11 +284,22 @@ export function ResultadoAnualTab() {
         meses.length > 0 && (
           <>
             <div className="mb-2 grid gap-4 md:grid-cols-3">
-              <TotalCard label={`Entradas (${year})`} value={totEntrada} className="text-emerald-300" />
-              <TotalCard label={`Saídas (${year})`} value={totSaida} className="text-danger" />
+              <TotalCard
+                label={`Entradas (${year})`}
+                value={totEntrada}
+                previsao={algumaPrevisao ? totPrevEntrada : undefined}
+                className="text-emerald-300"
+              />
+              <TotalCard
+                label={`Saídas (${year})`}
+                value={totSaida}
+                previsao={algumaPrevisao ? totPrevSaida : undefined}
+                className="text-danger"
+              />
               <TotalCard
                 label={totNet >= 0 ? `Lucro acumulado (${year})` : `Prejuízo acumulado (${year})`}
                 value={totNet}
+                previsao={algumaPrevisao ? totPrevNet : undefined}
                 className={totNet >= 0 ? "text-sky-300" : "text-danger"}
                 highlight
               />
@@ -260,11 +314,16 @@ export function ResultadoAnualTab() {
             {mesesFallback.length === 0 && <div className="mb-6" />}
 
             <ChartCard title="Entradas por mês" subtitle="Recebido + a receber (competência), em R$.">
-              <BarChart meses={meses} value={(m) => m.entrada} color={() => "rgb(110, 231, 183)"} />
+              <BarChart
+                meses={meses}
+                value={(m) => m.entrada}
+                real={realEntrada}
+                color={() => "rgb(110, 231, 183)"}
+              />
             </ChartCard>
 
             <ChartCard title="Saídas por mês" subtitle="Pago + a pagar (competência), em R$.">
-              <BarChart meses={meses} value={(m) => m.saida} color={() => "rgb(248, 113, 113)"} />
+              <BarChart meses={meses} value={(m) => m.saida} real={realSaida} color={() => "rgb(248, 113, 113)"} />
             </ChartCard>
 
             <ChartCard
@@ -274,6 +333,7 @@ export function ResultadoAnualTab() {
               <BarChart
                 meses={meses}
                 value={(m) => m.net}
+                real={realNet}
                 color={(v) => (v >= 0 ? "rgb(74, 222, 128)" : "rgb(248, 113, 113)")}
                 acumulado
               />
@@ -324,11 +384,13 @@ function ResultadoSkeleton() {
 function TotalCard({
   label,
   value,
+  previsao,
   className,
   highlight
 }: {
   label: string;
   value: number;
+  previsao?: number; // parte prevista contida em `value` (só quando há previsão)
   className: string;
   highlight?: boolean;
 }) {
@@ -336,6 +398,11 @@ function TotalCard({
     <div className={`rounded-xl border bg-surface p-5 ${highlight ? "border-primary/30" : "border-border"}`}>
       <p className="text-xs text-muted">{label}</p>
       <p className={`mt-2 font-mono text-xl font-semibold ${className}`}>{formatCurrency(value, "BRL")}</p>
+      {previsao !== undefined && previsao !== 0 && (
+        <p className="mt-1 text-xs text-amber-300" title="Campanhas ainda sem fechamento, somadas pela previsão">
+          inclui previsão de {formatCurrency(previsao, "BRL")}
+        </p>
+      )}
     </div>
   );
 }
@@ -355,18 +422,22 @@ function ChartCard({ title, subtitle, children }: { title: string; subtitle: str
 function BarChart({
   meses,
   value,
+  real,
   color,
   acumulado
 }: {
   meses: MesResultado[];
-  value: (m: MesResultado) => number;
+  value: (m: MesResultado) => number; // total (real + previsão)
+  real: (m: MesResultado) => number; // só a parte real
   color: (v: number) => string;
   acumulado?: boolean;
 }) {
+  const uid = useId().replace(/:/g, "");
   const values = meses.map(value);
+  const reals = meses.map(real);
   const accs = acumulado ? meses.map((m) => m.acumulado) : [];
-  const max = Math.max(...values, ...accs, 0);
-  const min = Math.min(...values, ...accs, 0);
+  const max = Math.max(...values, ...reals, ...accs, 0);
+  const min = Math.min(...values, ...reals, ...accs, 0);
   const range = max - min || 1;
 
   const W = 720;
@@ -377,17 +448,68 @@ function BarChart({
   const padB = 44;
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
-  const slot = innerW / meses.length;
-  const barW = slot * 0.6;
+  const slot = innerW / Math.max(meses.length, 1);
+  const barW = Math.min(slot * 0.6, 80);
   const yOf = (v: number) => padT + innerH - ((v - min) / range) * innerH;
   const zeroY = yOf(0);
   const xCenter = (i: number) => padL + i * slot + slot / 2;
 
-  const linePoints = acumulado ? meses.map((m, i) => `${xCenter(i)},${yOf(m.acumulado)}`).join(" ") : "";
+  // Acumulado: sólido até o mês anterior ao 1º mês com previsão/em andamento,
+  // tracejado dali em diante.
+  const idxIncerto = meses.findIndex((m) => temPrevisao(m) || m.emAndamento);
+  const splitAt = idxIncerto <= 0 ? idxIncerto : idxIncerto - 1;
+  const pts = acumulado ? meses.map((m, i) => `${xCenter(i)},${yOf(m.acumulado)}`) : [];
+  const solidPts = idxIncerto === -1 ? pts : pts.slice(0, splitAt + 1);
+  const dashedPts = idxIncerto === -1 ? [] : pts.slice(Math.max(splitAt, 0));
+
+  const algumaPrev = meses.some(temPrevisao);
+  const algumAndamento = meses.some((m) => m.emAndamento);
+
+  const seg = (a: number, b: number) => {
+    const top = yOf(Math.max(a, b));
+    const bottom = yOf(Math.min(a, b));
+    return { top, h: Math.max(bottom - top, a !== b ? 1 : 0) };
+  };
+
+  // Legenda: acumulado + mês em andamento + previsão, lado a lado.
+  const legend: { key: string; label: string; node: (x: number) => React.ReactNode }[] = [];
+  if (acumulado)
+    legend.push({
+      key: "acc",
+      label: "Lucro acumulado",
+      node: (x) => <line x1={x} x2={x + 16} y1={H - 3} y2={H - 3} stroke="hsl(var(--primary))" strokeWidth="2" />
+    });
+  if (algumAndamento)
+    legend.push({
+      key: "and",
+      label: "Mês em andamento",
+      node: (x) => (
+        <rect x={x} y={H - 9} width={16} height={9} fill={`url(#hatch-${uid})`} stroke="currentColor" strokeOpacity="0.6" strokeDasharray="2,2" />
+      )
+    });
+  if (algumaPrev)
+    legend.push({
+      key: "prev",
+      label: "Previsão Campanhas (sem fechamento)",
+      node: (x) => (
+        <rect x={x} y={H - 9} width={16} height={9} fill="currentColor" fillOpacity="0.08" stroke="rgb(252, 211, 77)" strokeDasharray="3,2" />
+      )
+    });
+  let lx = padL;
+  const legendItems = legend.map((l) => {
+    const x = lx;
+    lx += 16 + 8 + l.label.length * 5.6 + 18;
+    return { ...l, x };
+  });
 
   return (
     <div className="overflow-x-auto">
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: "600px" }}>
+        <defs>
+          <pattern id={`hatch-${uid}`} patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="6" stroke="currentColor" strokeOpacity="0.45" strokeWidth="2" />
+          </pattern>
+        </defs>
         <line x1={padL} x2={W - padR} y1={zeroY} y2={zeroY} stroke="currentColor" strokeOpacity="0.2" strokeDasharray="3,3" />
         <text x={padL - 8} y={padT + 4} textAnchor="end" fontSize="10" fill="currentColor" fillOpacity="0.5">
           {formatTickShort(max)}
@@ -403,23 +525,62 @@ function BarChart({
 
         {meses.map((m, i) => {
           const v = values[i];
+          const r = reals[i];
+          const hasPrev = v !== r;
           const pos = v >= 0;
-          const top = pos ? yOf(v) : zeroY;
-          const bottom = pos ? zeroY : yOf(v);
           const cx = xCenter(i);
+          const x = cx - barW / 2;
+          const realSeg = seg(0, r);
+          const prevSeg = seg(r, v);
+          const cor = color(v);
           const tip =
-            `${formatMonthLabel(m.month)}: ${formatCurrency(v, "BRL")}` +
+            `${formatMonthLabel(m.month)}${m.emAndamento ? " (mês em andamento)" : ""}: ${formatCurrency(v, "BRL")}` +
+            (hasPrev ? `\nReal: ${formatCurrency(r, "BRL")} · previsão: ${formatCurrency(v - r, "BRL")}` : "") +
             (acumulado ? `\nAcumulado: ${formatCurrency(m.acumulado, "BRL")}` : "") +
             `\nCotação: R$ ${m.rate.toFixed(4).replace(".", ",")}${m.rateFallback ? " (padrão — mês sem cotação)" : ""}`;
+          const tipPrev =
+            `Previsão Campanhas — sem fechamento: ${m.campanhasPrev.join(", ") || "—"}` +
+            `\n${formatMonthLabel(m.month)}: ${formatCurrency(v - r, "BRL")}`;
+          const topY = Math.min(realSeg.top, hasPrev ? prevSeg.top : realSeg.top);
+          const bottomY = Math.max(realSeg.top + realSeg.h, hasPrev ? prevSeg.top + prevSeg.h : 0);
           return (
             <g key={m.month}>
-              <rect x={cx - barW / 2} y={top} width={barW} height={Math.max(Math.abs(bottom - top), v !== 0 ? 1 : 0)} fill={color(v)} opacity="0.75">
-                <title>{tip}</title>
-              </rect>
+              {realSeg.h > 0 && (
+                <rect
+                  x={x}
+                  y={realSeg.top}
+                  width={barW}
+                  height={realSeg.h}
+                  fill={cor}
+                  opacity={m.emAndamento ? 0.35 : 0.75}
+                  stroke={m.emAndamento ? cor : undefined}
+                  strokeDasharray={m.emAndamento ? "4,3" : undefined}
+                >
+                  <title>{tip}</title>
+                </rect>
+              )}
+              {m.emAndamento && realSeg.h > 0 && (
+                <rect x={x} y={realSeg.top} width={barW} height={realSeg.h} fill={`url(#hatch-${uid})`} pointerEvents="none" />
+              )}
+              {hasPrev && prevSeg.h > 0 && (
+                <rect
+                  x={x}
+                  y={prevSeg.top}
+                  width={barW}
+                  height={prevSeg.h}
+                  fill={cor}
+                  fillOpacity="0.15"
+                  stroke="rgb(252, 211, 77)"
+                  strokeWidth="1.5"
+                  strokeDasharray="4,3"
+                >
+                  <title>{tipPrev}</title>
+                </rect>
+              )}
               {v !== 0 && (
                 <text
                   x={cx}
-                  y={pos ? top - 6 : bottom + 13}
+                  y={pos ? topY - 6 : bottomY + 13}
                   textAnchor="middle"
                   fontSize="10"
                   fill="currentColor"
@@ -438,18 +599,49 @@ function BarChart({
 
         {acumulado && (
           <g>
-            <polyline points={linePoints} fill="none" stroke="hsl(var(--primary))" strokeWidth="2" />
-            {meses.map((m, i) => (
-              <circle key={m.month} cx={xCenter(i)} cy={yOf(m.acumulado)} r="3" fill="hsl(var(--primary))">
-                <title>{`Acumulado até ${formatMonthLabel(m.month)}: ${formatCurrency(m.acumulado, "BRL")}`}</title>
-              </circle>
-            ))}
-            <line x1={padL} x2={padL + 16} y1={H - 3} y2={H - 3} stroke="hsl(var(--primary))" strokeWidth="2" />
-            <text x={padL + 20} y={H} fontSize="10" fill="currentColor" fillOpacity="0.6">
-              Lucro acumulado
-            </text>
+            {solidPts.length > 1 && (
+              <polyline points={solidPts.join(" ")} fill="none" stroke="hsl(var(--primary))" strokeWidth="2" />
+            )}
+            {dashedPts.length > 1 && (
+              <polyline
+                points={dashedPts.join(" ")}
+                fill="none"
+                stroke="hsl(var(--primary))"
+                strokeWidth="2"
+                strokeDasharray="5,4"
+              />
+            )}
+            {meses.map((m, i) => {
+              const incerto = temPrevisao(m) || m.emAndamento;
+              return (
+                <circle
+                  key={m.month}
+                  cx={xCenter(i)}
+                  cy={yOf(m.acumulado)}
+                  r="3"
+                  fill={incerto ? "hsl(var(--background))" : "hsl(var(--primary))"}
+                  stroke="hsl(var(--primary))"
+                  strokeWidth={incerto ? 1.5 : 0}
+                >
+                  <title>
+                    {`Acumulado até ${formatMonthLabel(m.month)}: ${formatCurrency(m.acumulado, "BRL")}` +
+                      (temPrevisao(m) ? " (inclui previsão)" : "") +
+                      (m.emAndamento ? " (mês em andamento)" : "")}
+                  </title>
+                </circle>
+              );
+            })}
           </g>
         )}
+
+        {legendItems.map((l) => (
+          <g key={l.key}>
+            {l.node(l.x)}
+            <text x={l.x + 22} y={H} fontSize="10" fill="currentColor" fillOpacity="0.6">
+              {l.label}
+            </text>
+          </g>
+        ))}
       </svg>
     </div>
   );
@@ -460,7 +652,10 @@ function MesesTable({ meses }: { meses: MesResultado[] }) {
     <div className="rounded-xl border border-border bg-surface">
       <div className="border-b border-border px-5 py-4">
         <h2 className="text-sm font-semibold text-foreground">Detalhe por mês</h2>
-        <p className="text-xs text-muted">Net por moeda (igual ao card &quot;Resultado do mês&quot;) e a conversão usada.</p>
+        <p className="text-xs text-muted">
+          Net por moeda (igual ao card &quot;Resultado do mês&quot;) e a conversão usada. Entradas/saídas/net já incluem a
+          previsão, quando houver.
+        </p>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -472,6 +667,7 @@ function MesesTable({ meses }: { meses: MesResultado[] }) {
               <th className="px-4 py-2 text-right font-medium">Cotação</th>
               <th className="px-4 py-2 text-right font-medium">Entradas</th>
               <th className="px-4 py-2 text-right font-medium">Saídas</th>
+              <th className="px-4 py-2 text-right font-medium">Previsão (net)</th>
               <th className="px-4 py-2 text-right font-medium">Net (R$)</th>
               <th className="px-4 py-2 text-right font-medium">Acumulado</th>
             </tr>
@@ -479,7 +675,22 @@ function MesesTable({ meses }: { meses: MesResultado[] }) {
           <tbody>
             {meses.map((m) => (
               <tr key={m.month} className="border-b border-border/50 font-mono text-xs last:border-0">
-                <td className="px-4 py-2 font-sans text-foreground">{formatMonthLabel(m.month)}</td>
+                <td className="px-4 py-2 font-sans text-foreground">
+                  {formatMonthLabel(m.month)}
+                  {m.emAndamento && (
+                    <span className="ml-2 rounded border border-dashed border-border px-1.5 py-0.5 text-[10px] text-muted">
+                      em andamento
+                    </span>
+                  )}
+                  {temPrevisao(m) && (
+                    <span
+                      className="ml-2 rounded border border-dashed border-amber-300/60 px-1.5 py-0.5 text-[10px] text-amber-300"
+                      title={`Previsão Campanhas — sem fechamento: ${m.campanhasPrev.join(", ") || "—"}`}
+                    >
+                      previsão
+                    </span>
+                  )}
+                </td>
                 <td className="px-4 py-2 text-right text-muted">{formatCurrency(m.entradaBrl - m.saidaBrl, "BRL")}</td>
                 <td className="px-4 py-2 text-right text-muted">{formatCurrency(m.entradaUsd - m.saidaUsd, "USD")}</td>
                 <td
@@ -491,6 +702,16 @@ function MesesTable({ meses }: { meses: MesResultado[] }) {
                 </td>
                 <td className="px-4 py-2 text-right text-emerald-300">{formatCurrency(m.entrada, "BRL")}</td>
                 <td className="px-4 py-2 text-right text-danger">{formatCurrency(m.saida, "BRL")}</td>
+                <td
+                  className={`px-4 py-2 text-right ${temPrevisao(m) ? "text-amber-300" : "text-muted"}`}
+                  title={
+                    temPrevisao(m)
+                      ? `Entradas previstas ${formatCurrency(m.prevEntrada, "BRL")} · saídas previstas ${formatCurrency(m.prevSaida, "BRL")}\nCampanhas sem fechamento: ${m.campanhasPrev.join(", ") || "—"}`
+                      : undefined
+                  }
+                >
+                  {temPrevisao(m) ? formatCurrency(m.prevEntrada - m.prevSaida, "BRL") : "—"}
+                </td>
                 <td className={`px-4 py-2 text-right ${m.net >= 0 ? "text-sky-300" : "text-danger"}`}>
                   {formatCurrency(m.net, "BRL")}
                 </td>
