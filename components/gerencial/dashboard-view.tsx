@@ -50,8 +50,9 @@ import {
   formatDateTimeShort
 } from "@/lib/format";
 import { contasOf, contaLabel, CONTA_DEFAULT } from "@/lib/contas";
+import { ResultadoAnualTab } from "@/components/gerencial/resultado-anual-view";
 
-type Tab = "fechamento" | "fluxo";
+type Tab = "fechamento" | "fluxo" | "anual";
 
 export function DashboardView() {
   const [tab, setTab] = useState<Tab>("fechamento");
@@ -62,9 +63,9 @@ export function DashboardView() {
         <h4 className="mb-1 text-xs font-semibold uppercase tracking-widest text-primary">Caracol Gerencial</h4>
         <h1 className="text-2xl font-semibold text-foreground">Dashboard financeiro</h1>
         <p className="mt-1 text-sm text-muted">
-          Duas visões: <span className="text-foreground">Fechamento</span> (regime de competência — o mês fechou no
-          azul?) e <span className="text-foreground">Fluxo de caixa</span> (regime de caixa — quanto preciso pagar e
-          quando vence).
+          <span className="text-foreground">Fechamento</span> (regime de competência — o mês fechou no azul?),{" "}
+          <span className="text-foreground">Fluxo de caixa</span> (regime de caixa — quanto preciso pagar e quando
+          vence) e <span className="text-foreground">Resultado anual</span> (competência, mês a mês do ano, em R$).
         </p>
       </div>
 
@@ -73,7 +74,8 @@ export function DashboardView() {
         {(
           [
             { v: "fechamento", l: "Fechamento" },
-            { v: "fluxo", l: "Fluxo de caixa" }
+            { v: "fluxo", l: "Fluxo de caixa" },
+            { v: "anual", l: "Resultado anual" }
           ] as Array<{ v: Tab; l: string }>
         ).map((t) => (
           <button
@@ -90,7 +92,7 @@ export function DashboardView() {
         ))}
       </div>
 
-      {tab === "fechamento" ? <FechamentoTab /> : <FluxoTab />}
+      {tab === "fechamento" ? <FechamentoTab /> : tab === "fluxo" ? <FluxoTab /> : <ResultadoAnualTab />}
     </div>
   );
 }

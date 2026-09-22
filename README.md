@@ -7,11 +7,13 @@ App de controle financeiro interno da Caracol. Etapa 4 do eixo financeiro (apos 
 - **Cadastro de transacoes** que nao estao em outras fontes:
   - Despesas: salario, custo fixo, avulsos
   - Receitas: parceiro sem nota, avulsas
-- **Dashboard com duas visões** agregando 4 fontes (`nf_invoices`, `nf_receivables`, `campanhas_fechamento_mensal`, `gerencial_transactions`), por moeda (BRL/USD):
+- **Dashboard com três visões** agregando 4 fontes (`nf_invoices`, `nf_receivables`, `campanhas_fechamento_mensal`, `gerencial_transactions`), por moeda (BRL/USD):
   - **Fechamento (competência)** — "o mês fechou no azul?". Tudo que pertence ao período de referência, independente de quando o dinheiro entra/sai. Tem um toggle **Mês / Ano**:
     - **Mês**: cards por moeda (recebido/pago, a receber/a pagar com breakdown expansível, **Resultado do mês = entradas − saídas**) + seção **"Detalhamento do mês"** que lista os títulos individuais (qual NF/transação/fechamento compõe cada bucket). Consome `/gerencial/dashboard?month=` e `/gerencial/dashboard/items?month=`.
     - **Ano**: resumo anual por moeda (entradas/saídas/resultado do ano civil) + gráfico SVG de resultado por mês (Jan–Dez do ano selecionado). Consome `/gerencial/forecast?start=YYYY-01&months_ahead=11`.
   - **Fluxo de caixa (vencimento)** — "quanto preciso pagar e quando vence?". Regime de caixa, pela data de vencimento. Tem um bucket **"Em atraso"** em destaque no topo (alerta vermelho) com a pagar/a receber vencidos por moeda, expansível pra listar os títulos (descrição, valor, vencimento, dias de atraso, selo "previsto"), e uma timeline de a pagar/a receber por vencimento nos próximos meses com net de caixa. Consome `/gerencial/cashflow?months_ahead=6`.
+
+  - **Resultado anual (competência, em R$)** — "o ano está dando lucro?". Filtro de ano (2026 em diante). Cards de total do ano (entradas, saídas, lucro/prejuízo acumulado) + 3 gráficos SVG jan–dez: **Entradas**, **Saídas** e **Net** (barras verde/vermelho + linha de lucro acumulado), e tabela de detalhe por mês. Consome `/gerencial/dashboard?month=` × 12 (mesma fonte do card "Resultado do mês" → o net de cada mês bate com o Fechamento; anti-double-count fica no backend) + `/gerencial/fx-rates`. O lado US$ vira R$ pela cotação **cadastrada no próprio mês**; mês sem cotação própria usa `USD_BRL_FALLBACK = 5,60` (marcado com `*`) — diferente do card consolidado do Fechamento, que herda a última cotação. Entradas e saídas em série única por enquanto (split custo fixo/variável pendente de classificação nos dados).
 
 > **Competência ≠ caixa.** Fechamento responde se o mês deu lucro; Fluxo de caixa responde quando o dinheiro de fato entra/sai. A aba de fluxo é tolerante a falha — se o endpoint `/cashflow` não estiver no ar, mostra erro só naquela aba, sem quebrar o Fechamento.
 
