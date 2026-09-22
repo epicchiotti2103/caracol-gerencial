@@ -9,13 +9,15 @@ import {
   Trash2,
   AlertCircle,
   FileText,
-  Loader2
+  Loader2,
+  Repeat
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useToast } from "@/lib/toast-context";
 import { TransactionEditModal } from "./transaction-edit-modal";
 import { TransactionMarkPaidModal } from "./transaction-mark-paid-modal";
-import type { GerencialTransaction, TransactionKind } from "@/types";
+import { RecurringPanel, type RecurringStatus } from "./recurring-panel";
+import type { GerencialTransaction, GerencialRecurring, TransactionKind } from "@/types";
 import {
   formatCurrency,
   formatMonthLabel,
@@ -25,6 +27,7 @@ import {
 import { contaLabel } from "@/lib/contas";
 
 type StatusFilter = "todos" | "pendente" | "pago";
+type Tab = "lancamentos" | "recorrentes";
 
 export function TransactionsView() {
   const toast = useToast();
@@ -43,6 +46,46 @@ export function TransactionsView() {
   const [editing, setEditing] = useState<GerencialTransaction | null | undefined>(undefined);
   // undefined = closed, null = new, object = edit existing
   const [marking, setMarking] = useState<GerencialTransaction | null>(null);
+
+  // Recorrentes (modelos). Falha no GET = tabela ainda nao existe (migration
+  // pendente) -> "aguardando ativacao", sem afetar a lista de transacoes.
+  const [tab, setTab] = useState<Tab>("lancamentos");
+  const [recurring, setRecurring] = useState<GerencialRecurring[]>([]);
+  const [recurringStatus, setRecurringStatus] = useState<RecurringStatus>("loading");
+  const [recurringError, setRecurringError] = useState("");
+  const [highlightRecurring, setHighlightRecurring] = useState<string | null>(null);
+
+  const loadRecurring = useCallback(async () => {
+    setRecurringStatus("loading");
+    setRecurringError("");
+    try {
+      const data = await apiFetch("/gerencial/recurring");
+      setRecurring(Array.isArray(data) ? data : data?.items ?? []);
+      setRecurringStatus("ready");
+    } catch (err: any) {
+      setRecurring([]);
+      setRecurringError(err?.message || "");
+      setRecurringStatus("unavailable");
+    }
+  }, []);
+
+  useEffect(() => {
+    loadRecurring();
+  }, [loadRecurring]);
+
+  const upsertRecurring = (m: GerencialRecurring) => {
+    setRecurring((prev) =>
+      prev.some((x) => x.id === m.id) ? prev.map((x) => (x.id === m.id ? m : x)) : [m, ...prev]
+    );
+  };
+
+  const goToRecurring = (id: string) => {
+    setHighlightRecurring(id);
+    setTab("recorrentes");
+    setTimeout(() => {
+      document.getElementById(`recurring-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 50);
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -153,15 +196,54 @@ export function TransactionsView() {
           >
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
           </button>
-          <button
-            onClick={() => setEditing(null)}
-            className="flex items-center gap-2 rounded-lg bg-primary px-3.5 py-2 text-sm font-semibold text-black hover:opacity-90"
-          >
-            <Plus className="h-4 w-4" />
-            Nova movimentação
-          </button>
+          {tab === "lancamentos" && (
+            <button
+              onClick={() => setEditing(null)}
+              className="flex items-center gap-2 rounded-lg bg-primary px-3.5 py-2 text-sm font-semibold text-black hover:opacity-90"
+            >
+              <Plus className="h-4 w-4" />
+              Nova movimentação
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Abas */}
+      <div className="mb-4 flex items-center gap-1 border-b border-border">
+        {(
+          [
+            { v: "lancamentos", l: "Lançamentos" },
+            { v: "recorrentes", l: "Recorrentes" }
+          ] as Array<{ v: Tab; l: string }>
+        ).map((opt) => (
+          <button
+            key={opt.v}
+            onClick={() => setTab(opt.v)}
+            className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
+              tab === opt.v ? "border-primary text-foreground" : "border-transparent text-muted hover:text-foreground"
+            }`}
+          >
+            {opt.l}
+            {opt.v === "recorrentes" && recurringStatus === "ready" && (
+              <span className="ml-1.5 text-xs text-muted">({recurring.filter((m) => m.active).length})</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {tab === "recorrentes" ? (
+        <RecurringPanel
+          status={recurringStatus}
+          errorDetail={recurringError}
+          items={recurring}
+          month={month}
+          highlightId={highlightRecurring}
+          onReload={loadRecurring}
+          onUpsert={upsertRecurring}
+          onMaterialized={load}
+        />
+      ) : (
+      <>
 
       {error && (
         <div className="mb-4 flex items-start gap-2 rounded-lg border border-danger/20 bg-danger/10 p-3">
@@ -281,8 +363,19 @@ export function TransactionsView() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="font-medium text-foreground">{t.description}</div>
-                        {t.recurring && (
-                          <div className="text-[10px] uppercase tracking-wider text-muted">recorrente</div>
+                        {t.recurring_id ? (
+                          <button
+                            onClick={() => goToRecurring(t.recurring_id as string)}
+                            className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-primary hover:bg-primary/25"
+                            title="Gerado por um modelo recorrente — ver modelo"
+                          >
+                            <Repeat className="h-2.5 w-2.5" />
+                            recorrente
+                          </button>
+                        ) : (
+                          t.recurring && (
+                            <div className="text-[10px] uppercase tracking-wider text-muted">recorrente</div>
+                          )
                         )}
                       </td>
                       <td className="px-4 py-3 text-muted">{t.category}</td>
@@ -373,6 +466,8 @@ export function TransactionsView() {
           </table>
         </div>
       </div>
+      </>
+      )}
 
       {editing !== undefined && (
         <TransactionEditModal

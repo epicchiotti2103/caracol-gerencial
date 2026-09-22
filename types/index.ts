@@ -39,10 +39,30 @@ export interface GerencialTransaction {
   proof_path?: string | null;
   notes?: string | null;
   recurring: boolean;
+  recurring_id?: string | null; // modelo recorrente que gerou o lancamento
   created_at?: string | null;
   updated_at?: string | null;
   created_by?: string | null;
 }
+
+// Modelo de lancamento recorrente (gerencial_recurring). Backend materializa
+// um lancamento por mes entre start_month e end_month (ou mes corrente + 1).
+export interface GerencialRecurring {
+  id: string;
+  kind: TransactionKind;
+  category: string;
+  description: string;
+  amount: number;
+  moeda: Moeda;
+  conta: Conta;
+  caracol_entity: CaracolEntity;
+  day_of_month: number;
+  start_month: string; // YYYY-MM
+  end_month: string | null; // YYYY-MM
+  active: boolean;
+}
+
+export type GerencialRecurringCreate = Omit<GerencialRecurring, "id">;
 
 export interface GerencialTransactionCreate {
   kind: TransactionKind;

@@ -8,6 +8,7 @@ App de controle financeiro interno da Caracol. Etapa 4 do eixo financeiro (apos 
   - Despesas: salario, custo fixo, avulsos
   - Receitas: parceiro sem nota, avulsas
   - **Mês de referência (competência)**: no form, nasce no mês selecionado na lista (não no mês corrente) e acompanha o vencimento enquanto o user não escolher o mês na mão. Aviso âmbar quando ref ≠ mês do vencimento (ou do pagamento, se sem vencimento). Dropdown de meses vai de jan/2026 (ou 12 meses atrás) até +12. "Marcar pago" sugere o vencimento como data (senão hoje).
+- **Lançamentos recorrentes (modelos)** — aba "Recorrentes" na tela de Transações. Cada modelo (`gerencial_recurring`: tipo, categoria, descrição, valor, moeda, conta, país, dia do mês, mês início/fim, ativo) gera um lançamento por mês; o backend materializa sozinho ao listar transações/dashboard (até mês corrente + 1) e há o botão "Gerar <mês>" (`POST /gerencial/recurring/materialize?month=`). Desativar = `DELETE` (não apaga lançamentos já gerados). Lançamento gerado traz `recurring_id` e ganha badge "recorrente" que leva ao modelo. Endpoints: `GET/POST /gerencial/recurring`, `PATCH/DELETE /gerencial/recurring/{id}`. Se o `GET` falhar (migration ainda não aplicada), a aba mostra "Recurso aguardando ativação" e o resto da tela segue normal.
 - **Dashboard com três visões** agregando 4 fontes (`nf_invoices`, `nf_receivables`, `campanhas_fechamento_mensal`, `gerencial_transactions`), por moeda (BRL/USD):
   - **Fechamento (competência)** — "o mês fechou no azul?". Tudo que pertence ao período de referência, independente de quando o dinheiro entra/sai. Tem um toggle **Mês / Ano**:
     - **Mês**: cards por moeda (recebido/pago, a receber/a pagar com breakdown expansível, **Resultado do mês = entradas − saídas**) + seção **"Detalhamento do mês"** que lista os títulos individuais (qual NF/transação/fechamento compõe cada bucket). Consome `/gerencial/dashboard?month=` e `/gerencial/dashboard/items?month=`.
@@ -25,7 +26,7 @@ App de controle financeiro interno da Caracol. Etapa 4 do eixo financeiro (apos 
 - Next.js 14 + TypeScript + Tailwind v3 (mesmo tema laranja da suite)
 - Auth via SSO no dominio `.aeobr.com.br` (cookie compartilhado)
 - Backend: rotas `/api/v1/gerencial/*` em `tracker-caracol/backend/app/routes/gerencial.py`
-- Banco (Supabase `vdjecbkmukjurhyvprug`): `gerencial_transactions`, `gerencial_opening_balances`, `gerencial_remittances`, `gerencial_fx_rates`, `gerencial_transfers`
+- Banco (Supabase `vdjecbkmukjurhyvprug`): `gerencial_transactions`, `gerencial_recurring`, `gerencial_opening_balances`, `gerencial_remittances`, `gerencial_fx_rates`, `gerencial_transfers`
 
 ## Dimensão CONTA
 
