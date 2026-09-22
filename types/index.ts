@@ -176,6 +176,13 @@ export interface DashboardItem {
   publisher?: string | null; // nome do publisher (lado a pagar)
   supplier_id?: string | null;
   grupo?: Grupo;
+  // Contexto da NF (opcional; backend em rollout). Ausente => card mostra so `descricao`.
+  counterparty?: string | null; // fornecedor (a pagar) ou cliente (a receber)
+  tag_name?: string | null;
+  nf_number?: string | null;
+  nf_description?: string | null;
+  nf_id?: string | null;
+  nf_kind?: "invoice" | "receivable" | null;
 }
 
 export interface DashboardItemsResponse {

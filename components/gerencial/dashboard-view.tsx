@@ -13,7 +13,8 @@ import {
   Check,
   Plus,
   Trash2,
-  X
+  X,
+  ExternalLink
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import type {
@@ -1115,6 +1116,28 @@ function MonthItemsBreakdown({
   );
 }
 
+const NF_APP_URL = "https://nf.aeobr.com.br";
+
+// Titulo do card: "<contraparte> · NF <numero>" quando o backend manda o contexto;
+// senao cai na `descricao` de sempre.
+function itemTitle(it: DashboardItem): string {
+  const parts: string[] = [];
+  if (it.counterparty) parts.push(it.counterparty);
+  if (it.nf_number) parts.push(`NF ${it.nf_number}`);
+  return parts.length > 0 ? parts.join(" · ") : it.descricao;
+}
+
+// NF a pagar tem detalhe em /invoice/[id]; NF a receber nao tem rota de detalhe
+// no app NF (edicao e modal na lista), entao cai na aba "receber".
+function nfHref(it: DashboardItem): string | null {
+  if (!it.nf_id) return null;
+  const kind =
+    it.nf_kind ?? (it.source === "nf_invoices" ? "invoice" : it.source === "nf_receivables" ? "receivable" : null);
+  if (kind === "invoice") return `${NF_APP_URL}/invoice/${encodeURIComponent(it.nf_id)}`;
+  if (kind === "receivable") return `${NF_APP_URL}/?view=receber`;
+  return null;
+}
+
 function ItemGroup({
   title,
   accent,
@@ -1142,7 +1165,9 @@ function ItemGroup({
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <p className="truncate text-sm text-foreground">{it.descricao}</p>
+                    <p className="truncate text-sm text-foreground" title={itemTitle(it)}>
+                      {itemTitle(it)}
+                    </p>
                     {it.sem_nf === true && (
                       <span
                         title={
@@ -1157,11 +1182,33 @@ function ItemGroup({
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-muted">
+                  <p className="flex flex-wrap items-center gap-x-1 text-xs text-muted">
                     {it.grupo && <span>{GRUPOS.find((g) => g.key === it.grupo)?.label ?? it.grupo} · </span>}
-                    {sourceLabel(it.source)}
+                    {it.tag_name && (
+                      <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                        {it.tag_name}
+                      </span>
+                    )}
+                    {it.tag_name && <span> · </span>}
+                    <span>{sourceLabel(it.source)}</span>
                     {it.due_date && <span> · vence {it.due_date}</span>}
+                    {nfHref(it) && (
+                      <a
+                        href={nfHref(it)!}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="ml-1 inline-flex items-center gap-0.5 text-primary hover:underline"
+                      >
+                        abrir no NF
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    )}
                   </p>
+                  {it.nf_description && (
+                    <p className="mt-0.5 truncate text-[11px] text-muted/80" title={it.nf_description}>
+                      {it.nf_description}
+                    </p>
+                  )}
                 </div>
                 <span className={`flex-shrink-0 font-mono text-sm ${accent}`}>
                   {formatCurrency(it.amount, moeda)}
