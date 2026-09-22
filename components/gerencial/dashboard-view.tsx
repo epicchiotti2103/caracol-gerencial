@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   RefreshCw,
   Wallet,
@@ -61,6 +61,14 @@ type Tab = "fechamento" | "fluxo" | "anual";
 
 export function DashboardView() {
   const [tab, setTab] = useState<Tab>("fechamento");
+  // Cache do Fechamento vale enquanto o dashboard está montado (trocar de aba/mês/ano
+  // reaproveita). Voltar de /transacoes remonta o dashboard e zera, pra não mostrar
+  // número velho depois de editar uma transação.
+  useState(() => {
+    cacheFechamentoMes.clear();
+    cacheFechamentoAno.clear();
+    return null;
+  });
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-8">
@@ -147,14 +155,38 @@ function FechamentoTab() {
 
 /* ---- Fechamento: visão MÊS (cards + drill-down de títulos) ---- */
 
+// Cache em memória por mês. Trocar de mês e voltar não refaz fetch; o botão
+// Atualizar (e salvar cotação) ignora o cache. Zerado quando o DashboardView remonta.
+interface FechamentoMesCache {
+  dashboard?: DashboardResponse;
+  items?: DashboardItem[] | null;
+  fxRate?: FxRate | null;
+}
+const cacheFechamentoMes = new Map<string, FechamentoMesCache>();
+
+function mergeCacheMes(month: string, patch: FechamentoMesCache) {
+  cacheFechamentoMes.set(month, { ...(cacheFechamentoMes.get(month) ?? {}), ...patch });
+}
+
 function FechamentoMes() {
   const monthOpts = buildMonthOptions();
   const [month, setMonth] = useState(currentYearMonth());
-  const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
-  const [items, setItems] = useState<DashboardItem[] | null>(null);
-  const [fxRate, setFxRate] = useState<FxRate | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [dashboard, setDashboard] = useState<DashboardResponse | null>(
+    () => cacheFechamentoMes.get(currentYearMonth())?.dashboard ?? null
+  );
+  const [items, setItems] = useState<DashboardItem[] | null>(
+    () => cacheFechamentoMes.get(currentYearMonth())?.items ?? null
+  );
+  const [fxRate, setFxRate] = useState<FxRate | null>(
+    () => cacheFechamentoMes.get(currentYearMonth())?.fxRate ?? null
+  );
+  const [dashLoading, setDashLoading] = useState(true);
+  const [itemsLoading, setItemsLoading] = useState(true);
   const [error, setError] = useState("");
+  const [itemsError, setItemsError] = useState("");
+  const reqId = useRef(0);
+  const monthRef = useRef(month);
+  monthRef.current = month;
 
   const [detalheMoeda, setDetalheMoeda] = useState<Moeda>("BRL");
   const [detalheGrupo, setDetalheGrupo] = useState<Grupo | "todos">("todos");
@@ -165,28 +197,83 @@ function FechamentoMes() {
   const [expandedUsdReceber, setExpandedUsdReceber] = useState(false);
   const [expandedUsdPagar, setExpandedUsdPagar] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const [d, it] = await Promise.all([
-        apiFetch(`/gerencial/dashboard?month=${month}`),
-        apiFetch(`/gerencial/dashboard/items?month=${month}`)
-      ]);
-      setDashboard(d as DashboardResponse);
-      setItems((it as DashboardItemsResponse).items);
-      // Tolerante: se a tabela de cotação ainda não existe, segue sem consolidar
-      try {
-        const fx = await apiFetch(`/gerencial/fx-rates?start=${month}&months_ahead=0`);
-        setFxRate((fx as FxRatesResponse).rates[0] ?? null);
-      } catch {
-        setFxRate(null);
+  // As 3 chamadas saem juntas e cada uma pinta o seu bloco assim que chega:
+  // os cards não esperam /items, e a cotação não espera nenhuma das duas.
+  const load = useCallback(
+    (force = false) => {
+      const id = ++reqId.current;
+      const cached = force ? undefined : cacheFechamentoMes.get(month);
+      setError("");
+      setItemsError("");
+
+      if (cached?.dashboard && cached.items !== undefined && cached.fxRate !== undefined) {
+        setDashboard(cached.dashboard);
+        setItems(cached.items);
+        setFxRate(cached.fxRate);
+        setDashLoading(false);
+        setItemsLoading(false);
+        return;
       }
-    } catch (err: any) {
-      setError(err?.message || "Falha ao carregar.");
-    } finally {
-      setLoading(false);
-    }
+
+      // Troca de mês sem cache: limpa o mês anterior pra não misturar números.
+      if (!cached?.dashboard) {
+        setDashboard(null);
+        setItems(null);
+      }
+      setDashLoading(true);
+      setItemsLoading(true);
+
+      (apiFetch(`/gerencial/dashboard?month=${month}`) as Promise<DashboardResponse>)
+        .then((d) => {
+          mergeCacheMes(month, { dashboard: d });
+          if (id !== reqId.current) return;
+          setDashboard(d);
+        })
+        .catch((err: any) => {
+          if (id !== reqId.current) return;
+          setError(err?.message || "Falha ao carregar.");
+        })
+        .finally(() => {
+          if (id === reqId.current) setDashLoading(false);
+        });
+
+      (apiFetch(`/gerencial/dashboard/items?month=${month}`) as Promise<DashboardItemsResponse>)
+        .then((it) => {
+          mergeCacheMes(month, { items: it.items });
+          if (id !== reqId.current) return;
+          setItems(it.items);
+        })
+        .catch((err: any) => {
+          if (id !== reqId.current) return;
+          setItemsError(err?.message || "Falha ao carregar os títulos do mês.");
+        })
+        .finally(() => {
+          if (id === reqId.current) setItemsLoading(false);
+        });
+
+      // Tolerante: se a tabela de cotação ainda não existe, segue sem consolidar
+      (apiFetch(`/gerencial/fx-rates?start=${month}&months_ahead=0`) as Promise<FxRatesResponse>)
+        .then((fx) => fx.rates[0] ?? null)
+        .catch(() => null)
+        .then((rate) => {
+          mergeCacheMes(month, { fxRate: rate });
+          if (id !== reqId.current) return;
+          setFxRate(rate);
+        });
+    },
+    [month]
+  );
+
+  // Salvar cotação só muda a cotação: refaz só o fx.
+  const reloadFx = useCallback(() => {
+    const m = month;
+    (apiFetch(`/gerencial/fx-rates?start=${m}&months_ahead=0`) as Promise<FxRatesResponse>)
+      .then((fx) => fx.rates[0] ?? null)
+      .catch(() => null)
+      .then((rate) => {
+        mergeCacheMes(m, { fxRate: rate });
+        if (monthRef.current === m) setFxRate(rate);
+      });
   }, [month]);
 
   useEffect(() => {
@@ -208,12 +295,12 @@ function FechamentoMes() {
           ))}
         </select>
         <button
-          onClick={load}
-          disabled={loading}
+          onClick={() => load(true)}
+          disabled={dashLoading || itemsLoading}
           className="rounded-lg border border-border bg-surface p-2 text-muted hover:bg-surface/80 disabled:opacity-50"
           title="Atualizar"
         >
-          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+          <RefreshCw className={`h-4 w-4 ${dashLoading || itemsLoading ? "animate-spin" : ""}`} />
         </button>
       </div>
 
@@ -224,10 +311,8 @@ function FechamentoMes() {
         </div>
       )}
 
-      {loading && !dashboard ? (
-        <div className="flex justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-primary" />
-        </div>
+      {dashLoading && !dashboard ? (
+        <FechamentoMesSkeleton />
       ) : (
         <>
           {dashboard?.grupos && (
@@ -274,7 +359,7 @@ function FechamentoMes() {
                 brlNet={netOf(dashboard.brl)}
                 usdNet={netOf(dashboard.usd)}
                 fxRate={fxRate}
-                onRateSaved={load}
+                onRateSaved={reloadFx}
                 grupos={dashboard.grupos}
               />
             </div>
@@ -283,6 +368,15 @@ function FechamentoMes() {
           {dashboard?.alertas_double_count && dashboard.alertas_double_count.length > 0 && (
             <DoubleCountAlerts alertas={dashboard.alertas_double_count} month={month} />
           )}
+
+          {itemsError && !items && (
+            <div className="mb-4 flex items-start gap-2 rounded-lg border border-danger/20 bg-danger/10 p-3">
+              <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-danger" />
+              <p className="text-sm text-danger">{itemsError}</p>
+            </div>
+          )}
+
+          {itemsLoading && !items && <ItemsSkeleton />}
 
           {items && (
             <MonthItemsBreakdown
@@ -299,40 +393,128 @@ function FechamentoMes() {
   );
 }
 
+/* ---- Skeletons (no lugar do spinner de tela inteira) ---- */
+
+function SkeletonBlock({ className = "" }: { className?: string }) {
+  return <div className={`animate-pulse rounded-md bg-border/60 ${className}`} />;
+}
+
+function SkeletonCard({ lines = 3, className = "" }: { lines?: number; className?: string }) {
+  return (
+    <div className={`rounded-xl border border-border bg-surface p-5 ${className}`}>
+      <SkeletonBlock className="mb-4 h-4 w-1/3" />
+      {Array.from({ length: lines }).map((_, i) => (
+        <SkeletonBlock key={i} className={`mb-2 h-3 ${i % 2 ? "w-2/3" : "w-full"}`} />
+      ))}
+      <SkeletonBlock className="mt-4 h-6 w-1/2" />
+    </div>
+  );
+}
+
+function FechamentoMesSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="Carregando fechamento">
+      <div className="mb-4 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <SkeletonCard key={i} lines={3} />
+        ))}
+      </div>
+      <SkeletonCard lines={1} className="mb-8" />
+      <ItemsSkeleton />
+    </div>
+  );
+}
+
+function ItemsSkeleton() {
+  return (
+    <div className="rounded-xl border border-border bg-surface p-5" aria-busy="true">
+      <SkeletonBlock className="mb-4 h-4 w-1/4" />
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div key={i} className="mb-3 flex items-center justify-between gap-4">
+          <SkeletonBlock className="h-3 w-1/2" />
+          <SkeletonBlock className="h-3 w-24" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FechamentoAnoSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="Carregando resumo anual">
+      <div className="mb-4 grid gap-4 md:grid-cols-2">
+        <SkeletonCard lines={4} />
+        <SkeletonCard lines={4} />
+      </div>
+      <SkeletonCard lines={1} className="mb-8" />
+      <div className="rounded-xl border border-border bg-surface p-5">
+        <SkeletonBlock className="mb-4 h-4 w-1/4" />
+        <SkeletonBlock className="h-48 w-full" />
+      </div>
+    </div>
+  );
+}
+
 /* ---- Fechamento: visão ANO (resumo anual + gráfico 12 meses) ---- */
+
+// Cache em memória por ano (mesma regra do mês).
+const cacheFechamentoAno = new Map<number, { forecast: ForecastResponse; rates: Record<string, number | null> }>();
 
 function FechamentoAno() {
   const yearOpts = buildYearOptions();
   const [year, setYear] = useState(currentYear());
-  const [forecast, setForecast] = useState<ForecastResponse | null>(null);
-  const [rates, setRates] = useState<Record<string, number | null>>({});
+  const [forecast, setForecast] = useState<ForecastResponse | null>(
+    () => cacheFechamentoAno.get(currentYear())?.forecast ?? null
+  );
+  const [rates, setRates] = useState<Record<string, number | null>>(
+    () => cacheFechamentoAno.get(currentYear())?.rates ?? {}
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const reqId = useRef(0);
 
   const [forecastMetric, setForecastMetric] = useState<ForecastMetric>("net");
   const [forecastMoeda, setForecastMoeda] = useState<ChartBase>("BRL");
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const f = await apiFetch(`/gerencial/forecast?start=${year}-01&months_ahead=11`);
-      setForecast(f as ForecastResponse);
-      // Tolerante: sem tabela de cotação, mostra só BRL/USD separados
-      try {
-        const fx = await apiFetch(`/gerencial/fx-rates?start=${year}-01&months_ahead=11`);
-        const map: Record<string, number | null> = {};
-        for (const r of (fx as FxRatesResponse).rates) map[r.month] = r.usd_brl;
-        setRates(map);
-      } catch {
-        setRates({});
+  const load = useCallback(
+    async (force = false) => {
+      const id = ++reqId.current;
+      const cached = force ? undefined : cacheFechamentoAno.get(year);
+      setError("");
+      if (cached) {
+        setForecast(cached.forecast);
+        setRates(cached.rates);
+        setLoading(false);
+        return;
       }
-    } catch (err: any) {
-      setError(err?.message || "Falha ao carregar.");
-    } finally {
-      setLoading(false);
-    }
-  }, [year]);
+      setLoading(true);
+      if (!force) setForecast(null);
+      try {
+        // forecast e cotações em paralelo; cotação é tolerante (sem tabela => {}).
+        const fxP = (apiFetch(`/gerencial/fx-rates?start=${year}-01&months_ahead=11`) as Promise<FxRatesResponse>)
+          .then((fx) => {
+            const map: Record<string, number | null> = {};
+            for (const r of fx.rates) map[r.month] = r.usd_brl;
+            return map;
+          })
+          .catch(() => ({}) as Record<string, number | null>);
+        const [f, map] = await Promise.all([
+          apiFetch(`/gerencial/forecast?start=${year}-01&months_ahead=11`) as Promise<ForecastResponse>,
+          fxP
+        ]);
+        cacheFechamentoAno.set(year, { forecast: f, rates: map });
+        if (id !== reqId.current) return;
+        setForecast(f);
+        setRates(map);
+      } catch (err: any) {
+        if (id !== reqId.current) return;
+        setError(err?.message || "Falha ao carregar.");
+      } finally {
+        if (id === reqId.current) setLoading(false);
+      }
+    },
+    [year]
+  );
 
   useEffect(() => {
     load();
@@ -353,7 +535,7 @@ function FechamentoAno() {
           ))}
         </select>
         <button
-          onClick={load}
+          onClick={() => load(true)}
           disabled={loading}
           className="rounded-lg border border-border bg-surface p-2 text-muted hover:bg-surface/80 disabled:opacity-50"
           title="Atualizar"
@@ -370,9 +552,7 @@ function FechamentoAno() {
       )}
 
       {loading && !forecast ? (
-        <div className="flex justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-primary" />
-        </div>
+        <FechamentoAnoSkeleton />
       ) : (
         forecast && (
           <>
