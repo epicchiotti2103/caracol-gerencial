@@ -94,10 +94,11 @@ export interface SaldoContas {
 }
 
 // Blocos do fechamento: mobile (tudo do Campanhas), talent (NFs com tag Talent),
-// empresa (salario, avulsos, resto). Opcional: backend pode ainda nao expor.
-export type Grupo = "mobile" | "talent" | "empresa";
+// jobs (NFs com tag Jobs), empresa (salario, avulsos, resto). Opcional: backend
+// pode ainda nao expor; chave ausente (ex: `jobs` antes do deploy) = zero.
+export type Grupo = "mobile" | "talent" | "jobs" | "empresa";
 
-export type GruposResultado = Record<Grupo, { brl: ResultadoAnualMoeda; usd: ResultadoAnualMoeda }>;
+export type GruposResultado = Partial<Record<Grupo, { brl: ResultadoAnualMoeda; usd: ResultadoAnualMoeda }>>;
 
 // Par fornecedor/campanha em que a divida pode estar contada 2x (informativo)
 export interface AlertaDoubleCount {

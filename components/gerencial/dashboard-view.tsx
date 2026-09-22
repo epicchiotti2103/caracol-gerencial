@@ -716,7 +716,7 @@ function ConsolidatedMonthCard({
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h3 className="text-sm font-semibold text-foreground">
-            {grupos ? "Resultado do mês (Mobile + Talent + Empresa)" : "Resultado consolidado (R$)"}
+            {grupos ? `Resultado do mês (${GRUPOS.map((g) => g.label).join(" + ")})` : "Resultado consolidado (R$)"}
           </h3>
           <p className="text-xs text-muted">
             Soma os dois lados convertendo o US$ pela cotação do mês. Responde como o mês realmente fechou.
@@ -791,7 +791,7 @@ function ConsolidatedMonthCard({
   );
 }
 
-/* ---- Blocos Mobile / Talent / Empresa (quando o backend manda `grupos`) ---- */
+/* ---- Blocos Mobile / Talent / Jobs / Empresa (quando o backend manda `grupos`) ---- */
 
 const GRUPOS: Array<{ key: Grupo; label: string; desc: string }> = [
   {
@@ -800,6 +800,7 @@ const GRUPOS: Array<{ key: Grupo; label: string; desc: string }> = [
     desc: "Campanhas: entra custo reembolsado + LL Caracol, sai pagamento de publisher"
   },
   { key: "talent", label: "Talent", desc: "NFs com tag Talent: margem, repasse e imposto" },
+  { key: "jobs", label: "Jobs", desc: "NFs com tag Jobs (a receber e a pagar)" },
   { key: "empresa", label: "Empresa", desc: "Salário, custos fixos, avulsos e o resto" }
 ];
 
@@ -831,7 +832,7 @@ function GruposBlocos({ grupos, rate }: { grupos: GruposResultado; rate: number 
     rate != null ? GRUPOS.reduce((s, g) => s + grupoNetBrl(grupoOf(grupos, g.key), rate), 0) : null;
   return (
     <div className="mb-4 space-y-4">
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {GRUPOS.map((g) => (
           <GrupoBloco key={g.key} label={g.label} desc={g.desc} data={grupoOf(grupos, g.key)} rate={rate} />
         ))}
@@ -843,7 +844,7 @@ function GruposBlocos({ grupos, rate }: { grupos: GruposResultado; rate: number 
       )}
       {total != null && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-surface px-5 py-3">
-          <span className="text-sm text-muted">Soma dos 3 blocos (R$)</span>
+          <span className="text-sm text-muted">Soma dos {GRUPOS.length} blocos (R$)</span>
           <span className={`font-mono text-base font-semibold ${total >= 0 ? "text-sky-300" : "text-danger"}`}>
             {formatCurrency(total, "BRL")}
           </span>
