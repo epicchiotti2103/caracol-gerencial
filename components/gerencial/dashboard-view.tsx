@@ -55,7 +55,7 @@ import {
   formatDateTimeShort
 } from "@/lib/format";
 import { contasOf, contaLabel, CONTA_DEFAULT } from "@/lib/contas";
-import { ResultadoAnualTab } from "@/components/gerencial/resultado-anual-view";
+import { ResultadoAnualTab, USD_BRL_FALLBACK } from "@/components/gerencial/resultado-anual-view";
 
 type Tab = "fechamento" | "fluxo" | "anual";
 
@@ -317,7 +317,7 @@ function FechamentoMes() {
       ) : (
         <>
           {dashboard?.grupos && (
-            <GruposBlocos grupos={dashboard.grupos} rate={fxRate?.usd_brl ?? null} />
+            <GruposBlocos grupos={dashboard.grupos} rate={fxRate?.usd_brl ?? USD_BRL_FALLBACK} />
           )}
 
           {dashboard?.grupos && (
@@ -699,13 +699,12 @@ function AnnualConsolidatedCard({
   for (const m of months) {
     entrada += m.entrada_brl;
     saida += m.saida_brl;
-    const rate = rates[m.month];
-    if (rate != null) {
-      entrada += m.entrada_usd * rate;
-      saida += m.saida_usd * rate;
-    } else if (m.entrada_usd !== 0 || m.saida_usd !== 0) {
-      semCotacao++;
-    }
+    // Própria ou herdada (fx-rates já herda); nenhuma cadastrada => 5,60.
+    const own = rates[m.month];
+    const rate = own ?? USD_BRL_FALLBACK;
+    entrada += m.entrada_usd * rate;
+    saida += m.saida_usd * rate;
+    if (own == null && (m.entrada_usd !== 0 || m.saida_usd !== 0)) semCotacao++;
   }
   const net = entrada - saida;
   return (
@@ -734,7 +733,8 @@ function AnnualConsolidatedCard({
           </div>
           {semCotacao > 0 && (
             <p className="mt-1 text-right text-xs text-amber-300">
-              {semCotacao} {semCotacao === 1 ? "mês sem cotação" : "meses sem cotação"} — o lado US$ deles ficou de fora.
+              {semCotacao} {semCotacao === 1 ? "mês sem nenhuma cotação" : "meses sem nenhuma cotação"} — o lado US$
+              deles usou R$ {USD_BRL_FALLBACK.toFixed(2).replace(".", ",")} (padrão).
             </p>
           )}
         </div>
@@ -869,8 +869,10 @@ function ConsolidatedMonthCard({
     setRateInput(fxRate?.usd_brl != null ? String(fxRate.usd_brl).replace(".", ",") : "");
   }, [fxRate, month]);
 
-  const rate = fxRate?.usd_brl ?? null;
-  const consolidado = rate != null ? brlNet + usdNet * rate : null;
+  // Mesma regra do Resultado anual: própria > herdada (fx-rates já herda) > 5,60.
+  const semNenhuma = fxRate?.usd_brl == null;
+  const rate: number = fxRate?.usd_brl ?? USD_BRL_FALLBACK;
+  const consolidado = brlNet + usdNet * rate;
 
   const save = async () => {
     const parsed = parseNumberPtBr(rateInput);
@@ -935,6 +937,12 @@ function ConsolidatedMonthCard({
           Cotação herdada de {formatMonthLabel(fxRate.source_month)} — informe a cotação deste mês pra fixar.
         </p>
       )}
+      {semNenhuma && (
+        <p className="mt-2 text-xs text-amber-300">
+          Nenhuma cotação cadastrada até este mês — usando R$ {USD_BRL_FALLBACK.toFixed(2).replace(".", ",")} (padrão).
+          Informe a cotação pra fixar.
+        </p>
+      )}
       {fxRate?.by && fxRate.updated_at && (
         <p className="mt-2 text-xs text-muted">
           Cotação editada por {fxRate.by} em {formatDateTimeShort(fxRate.updated_at)}
@@ -943,14 +951,13 @@ function ConsolidatedMonthCard({
 
       <div className="mt-4 flex flex-wrap items-end justify-between gap-2 border-t border-border pt-4">
         <span className="text-base font-semibold text-foreground">Resultado do mês (consolidado)</span>
-        {consolidado != null ? (
-          <div className="text-right">
+        <div className="text-right">
             <span
               className={`font-mono text-2xl font-semibold ${consolidado >= 0 ? "text-sky-300" : "text-danger"}`}
             >
               {formatCurrency(consolidado, "BRL")}
             </span>
-            {grupos && rate != null ? (
+            {grupos ? (
               <p className="mt-1 text-xs text-muted">
                 {GRUPOS.map((g, i) => (
                   <span key={g.key}>
@@ -962,12 +969,9 @@ function ConsolidatedMonthCard({
             ) : null}
             <p className="mt-1 text-xs text-muted">
               {formatCurrency(brlNet, "BRL")} + {formatCurrency(usdNet, "USD")} ×{" "}
-              {rate?.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+              {rate.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
             </p>
           </div>
-        ) : (
-          <span className="text-sm text-muted">Informe a cotação pra consolidar.</span>
-        )}
       </div>
     </div>
   );
@@ -1421,7 +1425,7 @@ function ForecastChart({
     let ent: number;
     let sai: number;
     if (moeda === "CONS") {
-      const rate = rates?.[m.month] ?? 0;
+      const rate = rates?.[m.month] ?? USD_BRL_FALLBACK;
       ent = m.entrada_brl + m.entrada_usd * rate;
       sai = m.saida_brl + m.saida_usd * rate;
     } else if (moeda === "BRL") {

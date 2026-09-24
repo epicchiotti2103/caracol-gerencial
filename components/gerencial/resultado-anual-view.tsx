@@ -25,14 +25,15 @@ import { currentYear, currentYearMonth, formatCurrency, formatMonthLabel } from 
    (NF vinculada assume o fechamento, recusada/cancelada fora, split Talent/Wave)
    ficam todas no backend, nada é recalculado aqui.
 
-   Moeda: o lado US$ vira R$ pela cotação CADASTRADA pro próprio mês
-   (gerencial_fx_rates). Desde a auditoria-rodada1 o backend manda por mês
-   `usd_brl_efetivo` (cotação usada) e `usd_brl_fallback` (bool) — quando vêm,
-   o front usa esses valores e não decide nada. Sem eles (backend antigo ou
-   caminho por mês), mês sem cotação própria usa USD_BRL_FALLBACK (defesa).
-   Mês em fallback é marcado com * na UI. Obs.: o card "Resultado consolidado" do Fechamento herda
-   a última cotação conhecida; aqui, por decisão do usuário, cotação herdada
-   NÃO vale — cai no fallback.
+   Moeda (task cambio-herdado, decisão do usuário): o lado US$ vira R$ pela
+   cotação cadastrada no próprio mês; sem ela, pela ÚLTIMA cotação cadastrada
+   antes do mês (herdada); USD_BRL_FALLBACK (5,60) só se não houver nenhuma.
+   É a mesma regra do card "Resultado consolidado" do Fechamento > Mês, então os
+   dois mostram a mesma taxa. O backend manda por mês `usd_brl_efetivo` +
+   `usd_brl_origem` ("mes"|"herdada"|"fallback"); quando vêm, o front só exibe.
+   Sem `usd_brl_origem` (backend antigo, que tratava herdada como fallback) ou no
+   caminho por mês, o front decide com o fx (inherited/source_month) — defesa.
+   Mês que não usou cotação própria é marcado com * na UI.
 
    Corte temporal: só entram meses até o mês VIGENTE (futuros não aparecem em
    nada nem são buscados). O mês corrente é desenhado hachurado ("mês em
@@ -63,7 +64,8 @@ interface MesResultado {
   entradaUsd: number;
   saidaUsd: number;
   rate: number;
-  rateFallback: boolean;
+  rateOrigem: RateOrigem;
+  rateSourceMonth: string | null; // YYYY-MM de onde veio a cotação herdada (se souber)
   entrada: number; // R$ (BRL + USD × rate), JÁ inclui previsão
   saida: number;
   net: number;
@@ -87,8 +89,17 @@ function yearOptions(): number[] {
   return out;
 }
 
-// Dado bruto de um ano: por mês os 4 campos brl/usd + cotação PRÓPRIA do mês
-// (null = sem cotação cadastrada ou herdada => fallback).
+type RateOrigem = "mes" | "herdada" | "fallback";
+const marcaTaxa = (m: MesResultado) => m.rateOrigem !== "mes";
+
+// Cotação do mês vinda do fx: própria ou herdada (null = nenhuma cadastrada).
+interface RateInfo {
+  rate: number | null;
+  inherited: boolean;
+  source_month: string | null;
+}
+
+// Dado bruto de um ano: por mês os 4 campos brl/usd + câmbio do backend (se vier).
 interface MesBruto {
   month: string;
   brl: ResultadoAnualMoeda;
@@ -97,10 +108,11 @@ interface MesBruto {
   previsao?: ResultadoAnualPrevisao | null;
   usd_brl_efetivo?: number | null;
   usd_brl_fallback?: boolean | null;
+  usd_brl_origem?: RateOrigem | null;
 }
 interface AnoBruto {
   months: MesBruto[];
-  rates: Record<string, number | null>;
+  rates: Record<string, RateInfo>;
   // "por_mes" = rota agregada falhou e caiu no caminho antigo (avisado na UI).
   origem: "agregado" | "por_mes";
   motivoFallback?: string;
@@ -110,11 +122,46 @@ interface AnoBruto {
 // Trocar de ano e voltar não refaz fetch; o botão Atualizar ignora o cache.
 const cacheAno = new Map<number, AnoBruto>();
 
-function ratesFromFx(fx: { month: string; usd_brl: number | null; inherited: boolean }[]) {
-  // Só a cotação cadastrada no PRÓPRIO mês vale; herdada => fallback.
-  const map: Record<string, number | null> = {};
-  for (const r of fx) if (r.month >= RESULTADO_INICIO) map[r.month] = r.inherited ? null : r.usd_brl;
+function ratesFromFx(
+  fx: { month: string; usd_brl: number | null; inherited: boolean; source_month?: string | null }[]
+) {
+  // Própria ou herdada (última cadastrada antes do mês) — as duas valem.
+  const map: Record<string, RateInfo> = {};
+  for (const r of fx)
+    if (r.month >= RESULTADO_INICIO)
+      map[r.month] = { rate: r.usd_brl, inherited: !!r.inherited, source_month: r.source_month ?? null };
   return map;
+}
+
+function validRate(v: unknown): v is number {
+  return typeof v === "number" && isFinite(v) && v > 0;
+}
+
+function isOrigem(v: unknown): v is RateOrigem {
+  return v === "mes" || v === "herdada" || v === "fallback";
+}
+
+// Câmbio de um mês: backend decide quando manda `usd_brl_origem`; senão o front
+// aplica a mesma regra (própria > herdada > 5,60) com o fx.
+function resolveRate(d: MesBruto, fx: RateInfo | undefined): { rate: number; origem: RateOrigem; source: string | null } {
+  const fxRate = validRate(fx?.rate) ? fx!.rate! : null;
+  const fxOrigem: RateOrigem = fx?.inherited ? "herdada" : "mes";
+  const source = fx?.inherited ? fx.source_month : null;
+  const efetivo = d.usd_brl_efetivo;
+  if (validRate(efetivo)) {
+    if (isOrigem(d.usd_brl_origem)) {
+      return { rate: efetivo, origem: d.usd_brl_origem, source: d.usd_brl_origem === "herdada" ? source : null };
+    }
+    // Backend antigo: fallback=true também cobria mês com cotação herdada.
+    if (d.usd_brl_fallback === true) {
+      return fxRate != null
+        ? { rate: fxRate, origem: fxOrigem, source }
+        : { rate: efetivo, origem: "fallback", source: null };
+    }
+    return { rate: efetivo, origem: "mes", source: null };
+  }
+  if (fxRate != null) return { rate: fxRate, origem: fxOrigem, source };
+  return { rate: USD_BRL_FALLBACK, origem: "fallback", source: null };
 }
 
 // Caminho rápido: 1 chamada agregada. Lança erro se a rota não existir (404)
@@ -135,7 +182,8 @@ async function loadAgregado(year: number, months: string[]): Promise<AnoBruto> {
       status: d.status,
       previsao: d.previsao ?? null,
       usd_brl_efetivo: d.usd_brl_efetivo ?? null,
-      usd_brl_fallback: d.usd_brl_fallback ?? null
+      usd_brl_fallback: d.usd_brl_fallback ?? null,
+      usd_brl_origem: isOrigem(d.usd_brl_origem) ? d.usd_brl_origem : null
     };
   });
   return { months: out, rates: ratesFromFx(r.fx), origem: "agregado" };
@@ -145,7 +193,7 @@ async function loadAgregado(year: number, months: string[]): Promise<AnoBruto> {
 async function loadPorMes(year: number, months: string[]): Promise<AnoBruto> {
   const fxP = (apiFetchStrict(`/gerencial/fx-rates?start=${year}-01&months_ahead=11`) as Promise<FxRatesResponse>)
     .then((fx) => ratesFromFx(fx.rates))
-    .catch(() => ({}) as Record<string, number | null>);
+    .catch(() => ({}) as Record<string, RateInfo>);
   const [ds, rates] = await Promise.all([
     Promise.all(months.map((m) => apiFetchStrict(`/gerencial/dashboard?month=${m}`) as Promise<DashboardResponse>)),
     fxP
@@ -211,18 +259,7 @@ export function ResultadoAnualTab() {
     let acc = 0;
     const vigente = currentYearMonth();
     return dashboards.filter((d) => d.month >= RESULTADO_INICIO && d.month <= vigente).map((d) => {
-      // 1º: câmbio decidido no backend. 2º (defesa): cotação própria do mês ou 5,60.
-      const efetivo = d.usd_brl_efetivo;
-      let rate: number;
-      let rateFallback: boolean;
-      if (typeof efetivo === "number" && isFinite(efetivo) && efetivo > 0) {
-        rate = efetivo;
-        rateFallback = d.usd_brl_fallback === true;
-      } else {
-        const own = rates[d.month];
-        rateFallback = own == null;
-        rate = own ?? USD_BRL_FALLBACK;
-      }
+      const { rate, origem, source } = resolveRate(d, rates[d.month]);
       const p = d.previsao;
       const prevEntrada = p ? (p.brl?.a_receber ?? 0) + (p.usd?.a_receber ?? 0) * rate : 0;
       const prevSaida = p ? (p.brl?.a_pagar ?? 0) + (p.usd?.a_pagar ?? 0) * rate : 0;
@@ -247,7 +284,8 @@ export function ResultadoAnualTab() {
         entradaUsd,
         saidaUsd,
         rate,
-        rateFallback,
+        rateOrigem: origem,
+        rateSourceMonth: source,
         entrada,
         saida,
         net,
@@ -263,9 +301,8 @@ export function ResultadoAnualTab() {
   const totPrevSaida = meses.reduce((s, m) => s + m.prevSaida, 0);
   const totPrevNet = totPrevEntrada - totPrevSaida;
   const algumaPrevisao = meses.some(temPrevisao);
-  const mesesFallback = meses.filter((m) => m.rateFallback && (m.entradaUsd !== 0 || m.saidaUsd !== 0));
-  // Taxa(s) de fallback efetivamente usadas (vêm do backend quando ele manda).
-  const taxasFallback = Array.from(new Set(mesesFallback.map((m) => fmtTaxa(m.rate))));
+  // Meses com lado US$ que não usaram cotação própria (herdada ou padrão).
+  const mesesMarcados = meses.filter((m) => marcaTaxa(m) && (m.entradaUsd !== 0 || m.saidaUsd !== 0));
 
   return (
     <>
@@ -273,7 +310,8 @@ export function ResultadoAnualTab() {
         <p className="max-w-xl text-sm text-muted">
           Por <span className="text-foreground">competência</span>, o mesmo eixo do Fechamento: o resultado de cada mês
           é o mesmo do card &quot;Resultado do mês&quot;. Tudo em R$ — o lado US$ é convertido pela cotação cadastrada
-          no mês (sem cotação: R$ {USD_BRL_FALLBACK.toFixed(2).replace(".", ",")}, marcado com *).
+          no mês; sem ela, pela última cotação cadastrada antes (herdada, marcada com *), a mesma do card do
+          Fechamento.
           <span className="mt-1 block text-xs">Dados a partir de {shortMonth(RESULTADO_INICIO).toLowerCase().replace("/", "/20")}.</span>
         </p>
         <div className="flex items-center gap-2">
@@ -343,14 +381,14 @@ export function ResultadoAnualTab() {
                 highlight
               />
             </div>
-            {mesesFallback.length > 0 && (
+            {mesesMarcados.length > 0 && (
               <p className="mb-6 text-xs text-amber-300">
-                * {mesesFallback.map((m) => shortMonth(m.month)).join(", ")}{" "}
-                {mesesFallback.length === 1 ? "não tem cotação cadastrada" : "não têm cotação cadastrada"} — o lado US$
-                usou R$ {taxasFallback.join(" / ")} (cotação padrão). Cadastre em Fechamento › Mês.
+                * Sem cotação própria no mês — o lado US$ usou:{" "}
+                {mesesMarcados.map((m) => `${shortMonth(m.month)} ${descTaxa(m)}`).join("; ")}. Cadastre em Fechamento ›
+                Mês pra fixar.
               </p>
             )}
-            {mesesFallback.length === 0 && <div className="mb-6" />}
+            {mesesMarcados.length === 0 && <div className="mb-6" />}
 
             <ChartCard title="Entradas por mês" subtitle="Recebido + a receber (competência), em R$.">
               <BarChart
@@ -576,7 +614,7 @@ function BarChart({
             `${formatMonthLabel(m.month)}${m.emAndamento ? " (mês em andamento)" : ""}: ${formatCurrency(v, "BRL")}` +
             (hasPrev ? `\nReal: ${formatCurrency(r, "BRL")} · previsão: ${formatCurrency(v - r, "BRL")}` : "") +
             (acumulado ? `\nAcumulado: ${formatCurrency(m.acumulado, "BRL")}` : "") +
-            `\nCotação: R$ ${m.rate.toFixed(4).replace(".", ",")}${m.rateFallback ? " (padrão — mês sem cotação)" : ""}`;
+            `\nCotação: R$ ${marcaTaxa(m) ? descTaxa(m) : fmtTaxa(m.rate)}`;
           const tipPrev =
             `Previsão Campanhas — sem fechamento: ${m.campanhasPrev.join(", ") || "—"}` +
             `\n${formatMonthLabel(m.month)}: ${formatCurrency(v - r, "BRL")}`;
@@ -630,7 +668,7 @@ function BarChart({
               )}
               <text x={cx} y={H - 14} textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.5">
                 {shortMonth(m.month)}
-                {m.rateFallback && (m.entradaUsd !== 0 || m.saidaUsd !== 0) ? "*" : ""}
+                {marcaTaxa(m) && (m.entradaUsd !== 0 || m.saidaUsd !== 0) ? "*" : ""}
               </text>
             </g>
           );
@@ -733,11 +771,11 @@ function MesesTable({ meses }: { meses: MesResultado[] }) {
                 <td className="px-4 py-2 text-right text-muted">{formatCurrency(m.entradaBrl - m.saidaBrl, "BRL")}</td>
                 <td className="px-4 py-2 text-right text-muted">{formatCurrency(m.entradaUsd - m.saidaUsd, "USD")}</td>
                 <td
-                  className={`px-4 py-2 text-right ${m.rateFallback ? "text-amber-300" : "text-muted"}`}
-                  title={m.rateFallback ? "Mês sem cotação cadastrada — usado o valor padrão" : "Cotação cadastrada no mês"}
+                  className={`px-4 py-2 text-right ${marcaTaxa(m) ? "text-amber-300" : "text-muted"}`}
+                  title={marcaTaxa(m) ? `Sem cotação própria: ${descTaxa(m)}` : "Cotação cadastrada no mês"}
                 >
                   {m.rate.toFixed(4).replace(".", ",")}
-                  {m.rateFallback ? "*" : ""}
+                  {marcaTaxa(m) ? "*" : ""}
                 </td>
                 <td className="px-4 py-2 text-right text-emerald-300">{formatCurrency(m.entrada, "BRL")}</td>
                 <td className="px-4 py-2 text-right text-danger">{formatCurrency(m.saida, "BRL")}</td>
@@ -783,4 +821,12 @@ function shortMonth(yearMonth: string): string {
 
 function fmtTaxa(v: number): string {
   return v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+}
+
+// Ex.: "5,36 herdada de jul/26" · "5,60 padrão (nenhuma cotação cadastrada)".
+function descTaxa(m: MesResultado): string {
+  if (m.rateOrigem === "herdada")
+    return `${fmtTaxa(m.rate)} herdada${m.rateSourceMonth ? ` de ${shortMonth(m.rateSourceMonth).toLowerCase()}` : ""}`;
+  if (m.rateOrigem === "fallback") return `${fmtTaxa(m.rate)} padrão (nenhuma cotação cadastrada)`;
+  return fmtTaxa(m.rate);
 }

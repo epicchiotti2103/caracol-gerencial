@@ -373,11 +373,14 @@ export interface ResultadoAnualMes {
   // quando o mês não tem cotação própria.
   usd_brl_efetivo?: number | null;
   usd_brl_fallback?: boolean | null;
+  // task cambio-herdado: de onde veio o efetivo — cotação do próprio mês, herdada
+  // (última cadastrada antes do mês) ou fallback 5,60 (nenhuma cadastrada).
+  usd_brl_origem?: "mes" | "herdada" | "fallback" | null;
 }
 
 export interface ResultadoAnualResponse {
   year: number;
   from: string; // YYYY-MM
   months: ResultadoAnualMes[];
-  fx: { month: string; usd_brl: number | null; inherited: boolean }[];
+  fx: { month: string; usd_brl: number | null; inherited: boolean; source_month?: string | null }[];
 }
