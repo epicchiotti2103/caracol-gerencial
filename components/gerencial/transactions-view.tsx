@@ -12,7 +12,7 @@ import {
   Loader2,
   Repeat
 } from "lucide-react";
-import { apiFetch } from "@/lib/api";
+import { apiFetchStrict, readableError } from "@/lib/api-error";
 import { useToast } from "@/lib/toast-context";
 import { TransactionEditModal } from "./transaction-edit-modal";
 import { TransactionMarkPaidModal } from "./transaction-mark-paid-modal";
@@ -59,12 +59,12 @@ export function TransactionsView() {
     setRecurringStatus("loading");
     setRecurringError("");
     try {
-      const data = await apiFetch("/gerencial/recurring");
+      const data = await apiFetchStrict("/gerencial/recurring");
       setRecurring(Array.isArray(data) ? data : data?.items ?? []);
       setRecurringStatus("ready");
     } catch (err: any) {
       setRecurring([]);
-      setRecurringError(err?.message || "");
+      setRecurringError(readableError(err, ""));
       setRecurringStatus("unavailable");
     }
   }, []);
@@ -94,10 +94,10 @@ export function TransactionsView() {
       const params = new URLSearchParams({ reference_month: month });
       if (kindFilter !== "todos") params.set("kind", kindFilter);
       if (statusFilter !== "todos") params.set("status", statusFilter);
-      const data = await apiFetch(`/gerencial/transactions?${params.toString()}`);
+      const data = await apiFetchStrict(`/gerencial/transactions?${params.toString()}`);
       setList(Array.isArray(data) ? data : data?.items ?? []);
     } catch (err: any) {
-      setError(err?.message || "Falha ao carregar.");
+      setError(readableError(err, "Falha ao carregar."));
     } finally {
       setLoading(false);
     }
@@ -125,14 +125,14 @@ export function TransactionsView() {
   const unmarkPaid = async (t: GerencialTransaction) => {
     if (!confirm("Reverter pagamento?")) return;
     try {
-      const updated: GerencialTransaction = await apiFetch(
+      const updated: GerencialTransaction = await apiFetchStrict(
         `/gerencial/transactions/${t.id}/unmark-paid`,
         { method: "POST" }
       );
       setList((prev) => prev.map((x) => (x.id === t.id ? updated : x)));
       toast.success("Pagamento revertido.");
     } catch (err: any) {
-      toast.error(err?.message || "Falha ao reverter.");
+      toast.error(readableError(err, "Falha ao reverter."));
     }
   };
 
@@ -142,7 +142,7 @@ export function TransactionsView() {
     const [y, m] = ref.split("-").map((s) => parseInt(s, 10));
     const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
     try {
-      const cloned: GerencialTransaction = await apiFetch(
+      const cloned: GerencialTransaction = await apiFetchStrict(
         `/gerencial/transactions/${t.id}/clone`,
         { method: "POST", body: JSON.stringify({ reference_month: next }) }
       );
@@ -152,27 +152,27 @@ export function TransactionsView() {
         setList((prev) => [cloned, ...prev]);
       }
     } catch (err: any) {
-      toast.error(err?.message || "Falha ao clonar.");
+      toast.error(readableError(err, "Falha ao clonar."));
     }
   };
 
   const deleteTx = async (t: GerencialTransaction) => {
     if (!confirm(`Apagar "${t.description}"? Não dá pra desfazer.`)) return;
     try {
-      await apiFetch(`/gerencial/transactions/${t.id}`, { method: "DELETE" });
+      await apiFetchStrict(`/gerencial/transactions/${t.id}`, { method: "DELETE" });
       setList((prev) => prev.filter((x) => x.id !== t.id));
       toast.success("Apagada.");
     } catch (err: any) {
-      toast.error(err?.message || "Falha ao apagar.");
+      toast.error(readableError(err, "Falha ao apagar."));
     }
   };
 
   const openProof = async (t: GerencialTransaction) => {
     try {
-      const res: { url: string } = await apiFetch(`/gerencial/transactions/${t.id}/proof`);
+      const res: { url: string } = await apiFetchStrict(`/gerencial/transactions/${t.id}/proof`);
       if (res?.url) window.open(res.url, "_blank");
     } catch (err: any) {
-      toast.error(err?.message || "Falha ao abrir comprovante.");
+      toast.error(readableError(err, "Falha ao abrir comprovante."));
     }
   };
 

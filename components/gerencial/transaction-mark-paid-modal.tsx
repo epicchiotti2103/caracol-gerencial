@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { X, AlertCircle, Upload } from "lucide-react";
-import { apiFetch } from "@/lib/api";
+import { apiFetchStrict, readableError } from "@/lib/api-error";
 import { useToast } from "@/lib/toast-context";
 import type { GerencialTransaction } from "@/types";
 import { formatCurrency, formatMonthLabel, todayLocalIso } from "@/lib/format";
@@ -60,14 +60,14 @@ export function TransactionMarkPaidModal({ transaction, onClose, onSaved }: Prop
       // paid_at em ISO; backend aceita
       fd.append("paid_at", new Date(paidAt + "T12:00:00").toISOString());
       if (proof) fd.append("proof", proof);
-      const saved: GerencialTransaction = await apiFetch(
+      const saved: GerencialTransaction = await apiFetchStrict(
         `/gerencial/transactions/${transaction.id}/mark-paid`,
         { method: "POST", body: fd }
       );
       toast.success(isReceita ? "Marcada como recebida." : "Marcada como paga.");
       onSaved(saved);
     } catch (err: any) {
-      setError(err?.message || "Falha ao marcar.");
+      setError(readableError(err, "Falha ao marcar."));
     } finally {
       setSaving(false);
     }

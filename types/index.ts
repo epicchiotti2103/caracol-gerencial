@@ -368,6 +368,11 @@ export interface ResultadoAnualMes {
   grupos?: GruposResultado;
   status?: ResultadoAnualStatus;
   previsao?: ResultadoAnualPrevisao | null;
+  // Câmbio decidido no backend (aditivo — pode não vir em backend antigo).
+  // efetivo = cotação cadastrada no mês ou o fallback do backend; fallback = true
+  // quando o mês não tem cotação própria.
+  usd_brl_efetivo?: number | null;
+  usd_brl_fallback?: boolean | null;
 }
 
 export interface ResultadoAnualResponse {

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { X, AlertCircle } from "lucide-react";
-import { apiFetch } from "@/lib/api";
+import { apiFetchStrict, readableError } from "@/lib/api-error";
 import { useToast } from "@/lib/toast-context";
 import type {
   GerencialTransaction,
@@ -104,18 +104,18 @@ export function TransactionEditModal({ transaction, defaultMonth, onClose, onSav
     setSaving(true);
     try {
       const saved: GerencialTransaction = isEdit && transaction
-        ? await apiFetch(`/gerencial/transactions/${transaction.id}`, {
+        ? await apiFetchStrict(`/gerencial/transactions/${transaction.id}`, {
             method: "PATCH",
             body: JSON.stringify(payload)
           })
-        : await apiFetch("/gerencial/transactions", {
+        : await apiFetchStrict("/gerencial/transactions", {
             method: "POST",
             body: JSON.stringify(payload)
           });
       toast.success(isEdit ? "Transação atualizada." : "Transação criada.");
       onSaved(saved);
     } catch (err: any) {
-      setError(err?.message || "Falha ao salvar.");
+      setError(readableError(err, "Falha ao salvar."));
     } finally {
       setSaving(false);
     }

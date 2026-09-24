@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { AlertCircle, RefreshCw } from "lucide-react";
-import { apiFetch } from "@/lib/api";
+import { apiFetchStrict, readableError } from "@/lib/api-error";
 import type {
   DashboardResponse,
   FxRatesResponse,
@@ -26,8 +26,11 @@ import { currentYear, currentYearMonth, formatCurrency, formatMonthLabel } from 
    ficam todas no backend, nada é recalculado aqui.
 
    Moeda: o lado US$ vira R$ pela cotação CADASTRADA pro próprio mês
-   (gerencial_fx_rates). Mês sem cotação própria usa USD_BRL_FALLBACK e é
-   marcado com * na UI. Obs.: o card "Resultado consolidado" do Fechamento herda
+   (gerencial_fx_rates). Desde a auditoria-rodada1 o backend manda por mês
+   `usd_brl_efetivo` (cotação usada) e `usd_brl_fallback` (bool) — quando vêm,
+   o front usa esses valores e não decide nada. Sem eles (backend antigo ou
+   caminho por mês), mês sem cotação própria usa USD_BRL_FALLBACK (defesa).
+   Mês em fallback é marcado com * na UI. Obs.: o card "Resultado consolidado" do Fechamento herda
    a última cotação conhecida; aqui, por decisão do usuário, cotação herdada
    NÃO vale — cai no fallback.
 
@@ -92,10 +95,15 @@ interface MesBruto {
   usd: ResultadoAnualMoeda;
   status?: ResultadoAnualStatus;
   previsao?: ResultadoAnualPrevisao | null;
+  usd_brl_efetivo?: number | null;
+  usd_brl_fallback?: boolean | null;
 }
 interface AnoBruto {
   months: MesBruto[];
   rates: Record<string, number | null>;
+  // "por_mes" = rota agregada falhou e caiu no caminho antigo (avisado na UI).
+  origem: "agregado" | "por_mes";
+  motivoFallback?: string;
 }
 
 // Cache em memória por ano (vive enquanto a aba do browser estiver aberta).
@@ -113,38 +121,47 @@ function ratesFromFx(fx: { month: string; usd_brl: number | null; inherited: boo
 // ou vier num formato inesperado — aí o chamador cai no fallback.
 async function loadAgregado(year: number, months: string[]): Promise<AnoBruto> {
   const from = months[0];
-  const r = (await apiFetch(`/gerencial/resultado-anual?year=${year}&from=${from}`)) as ResultadoAnualResponse;
+  const r = (await apiFetchStrict(`/gerencial/resultado-anual?year=${year}&from=${from}`)) as ResultadoAnualResponse;
   if (!r || !Array.isArray(r.months) || !Array.isArray(r.fx)) throw new Error("resposta inesperada");
   const byMonth = new Map(r.months.map((m) => [m.month, m]));
   // Garante o mesmo conjunto/ordem de meses do caminho antigo.
   const out: MesBruto[] = months.map((m) => {
     const d = byMonth.get(m);
     if (!d || !d.brl || !d.usd) throw new Error(`mês ${m} ausente na resposta`);
-    return { month: m, brl: d.brl, usd: d.usd, status: d.status, previsao: d.previsao ?? null };
+    return {
+      month: m,
+      brl: d.brl,
+      usd: d.usd,
+      status: d.status,
+      previsao: d.previsao ?? null,
+      usd_brl_efetivo: d.usd_brl_efetivo ?? null,
+      usd_brl_fallback: d.usd_brl_fallback ?? null
+    };
   });
-  return { months: out, rates: ratesFromFx(r.fx) };
+  return { months: out, rates: ratesFromFx(r.fx), origem: "agregado" };
 }
 
 // Fallback: caminho antigo (1 /dashboard por mês), com fx buscado EM PARALELO.
 async function loadPorMes(year: number, months: string[]): Promise<AnoBruto> {
-  const fxP = (apiFetch(`/gerencial/fx-rates?start=${year}-01&months_ahead=11`) as Promise<FxRatesResponse>)
+  const fxP = (apiFetchStrict(`/gerencial/fx-rates?start=${year}-01&months_ahead=11`) as Promise<FxRatesResponse>)
     .then((fx) => ratesFromFx(fx.rates))
     .catch(() => ({}) as Record<string, number | null>);
   const [ds, rates] = await Promise.all([
-    Promise.all(months.map((m) => apiFetch(`/gerencial/dashboard?month=${m}`) as Promise<DashboardResponse>)),
+    Promise.all(months.map((m) => apiFetchStrict(`/gerencial/dashboard?month=${m}`) as Promise<DashboardResponse>)),
     fxP
   ]);
-  return { months: ds.map((d) => ({ month: d.month, brl: d.brl, usd: d.usd })), rates };
+  return { months: ds.map((d) => ({ month: d.month, brl: d.brl, usd: d.usd })), rates, origem: "por_mes" };
 }
 
 async function loadAno(year: number): Promise<AnoBruto> {
   const months = mesesDoAno(year);
-  if (months.length === 0) return { months: [], rates: {} };
+  if (months.length === 0) return { months: [], rates: {}, origem: "agregado" };
   try {
     return await loadAgregado(year, months);
   } catch (err: any) {
     if (err?.message === "Sessao expirada") throw err;
-    return loadPorMes(year, months);
+    const porMes = await loadPorMes(year, months);
+    return { ...porMes, motivoFallback: readableError(err, "rota agregada indisponível") };
   }
 }
 
@@ -174,7 +191,7 @@ export function ResultadoAnualTab() {
         cacheAno.set(year, d);
         if (id === reqId.current) setData(d);
       } catch (err: any) {
-        if (id === reqId.current) setError(err?.message || "Falha ao carregar.");
+        if (id === reqId.current) setError(readableError(err, "Falha ao carregar."));
       } finally {
         if (id === reqId.current) setLoading(false);
       }
@@ -194,9 +211,18 @@ export function ResultadoAnualTab() {
     let acc = 0;
     const vigente = currentYearMonth();
     return dashboards.filter((d) => d.month >= RESULTADO_INICIO && d.month <= vigente).map((d) => {
-      const own = rates[d.month];
-      const rateFallback = own == null;
-      const rate = own ?? USD_BRL_FALLBACK;
+      // 1º: câmbio decidido no backend. 2º (defesa): cotação própria do mês ou 5,60.
+      const efetivo = d.usd_brl_efetivo;
+      let rate: number;
+      let rateFallback: boolean;
+      if (typeof efetivo === "number" && isFinite(efetivo) && efetivo > 0) {
+        rate = efetivo;
+        rateFallback = d.usd_brl_fallback === true;
+      } else {
+        const own = rates[d.month];
+        rateFallback = own == null;
+        rate = own ?? USD_BRL_FALLBACK;
+      }
       const p = d.previsao;
       const prevEntrada = p ? (p.brl?.a_receber ?? 0) + (p.usd?.a_receber ?? 0) * rate : 0;
       const prevSaida = p ? (p.brl?.a_pagar ?? 0) + (p.usd?.a_pagar ?? 0) * rate : 0;
@@ -238,6 +264,8 @@ export function ResultadoAnualTab() {
   const totPrevNet = totPrevEntrada - totPrevSaida;
   const algumaPrevisao = meses.some(temPrevisao);
   const mesesFallback = meses.filter((m) => m.rateFallback && (m.entradaUsd !== 0 || m.saidaUsd !== 0));
+  // Taxa(s) de fallback efetivamente usadas (vêm do backend quando ele manda).
+  const taxasFallback = Array.from(new Set(mesesFallback.map((m) => fmtTaxa(m.rate))));
 
   return (
     <>
@@ -270,6 +298,17 @@ export function ResultadoAnualTab() {
           </button>
         </div>
       </div>
+
+      {data?.origem === "por_mes" && (
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-400/20 bg-amber-400/10 p-3">
+          <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-300" />
+          <p className="text-sm text-amber-300">
+            A rota agregada do Resultado anual falhou{data.motivoFallback ? ` (${data.motivoFallback})` : ""} — os
+            números vieram do caminho antigo (1 consulta por mês). A previsão do Campanhas e o status dos meses não
+            aparecem nesse modo, e o câmbio é decidido aqui no navegador. Clique em Atualizar pra tentar de novo.
+          </p>
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 flex items-start gap-2 rounded-lg border border-danger/20 bg-danger/10 p-3">
@@ -308,7 +347,7 @@ export function ResultadoAnualTab() {
               <p className="mb-6 text-xs text-amber-300">
                 * {mesesFallback.map((m) => shortMonth(m.month)).join(", ")}{" "}
                 {mesesFallback.length === 1 ? "não tem cotação cadastrada" : "não têm cotação cadastrada"} — o lado US$
-                usou R$ {USD_BRL_FALLBACK.toFixed(2).replace(".", ",")}. Cadastre em Fechamento › Mês.
+                usou R$ {taxasFallback.join(" / ")} (cotação padrão). Cadastre em Fechamento › Mês.
               </p>
             )}
             {mesesFallback.length === 0 && <div className="mb-6" />}
@@ -740,4 +779,8 @@ function shortMonth(yearMonth: string): string {
   if (!m) return yearMonth;
   const names = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
   return `${names[parseInt(m[2], 10) - 1]}/${m[1].slice(2)}`;
+}
+
+function fmtTaxa(v: number): string {
+  return v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 }

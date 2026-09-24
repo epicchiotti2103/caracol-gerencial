@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { X, AlertCircle } from "lucide-react";
-import { apiFetch } from "@/lib/api";
+import { apiFetchStrict, readableError } from "@/lib/api-error";
 import { useToast } from "@/lib/toast-context";
 import type {
   GerencialRecurring,
@@ -95,18 +95,18 @@ export function RecurringEditModal({ model, onClose, onSaved }: Props) {
     setSaving(true);
     try {
       const saved: GerencialRecurring = isEdit && model
-        ? await apiFetch(`/gerencial/recurring/${model.id}`, {
+        ? await apiFetchStrict(`/gerencial/recurring/${model.id}`, {
             method: "PATCH",
             body: JSON.stringify(payload)
           })
-        : await apiFetch("/gerencial/recurring", {
+        : await apiFetchStrict("/gerencial/recurring", {
             method: "POST",
             body: JSON.stringify(payload)
           });
       toast.success(isEdit ? "Modelo atualizado." : "Modelo criado.");
       onSaved(saved);
     } catch (err: any) {
-      setError(err?.message || "Falha ao salvar.");
+      setError(readableError(err, "Falha ao salvar."));
     } finally {
       setSaving(false);
     }

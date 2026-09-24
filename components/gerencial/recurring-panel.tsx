@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Plus, Pencil, Power, Loader2, Clock, RefreshCw } from "lucide-react";
-import { apiFetch } from "@/lib/api";
+import { apiFetchStrict, readableError } from "@/lib/api-error";
 import { useToast } from "@/lib/toast-context";
 import { RecurringEditModal } from "./recurring-edit-modal";
 import type { GerencialRecurring } from "@/types";
@@ -40,11 +40,11 @@ export function RecurringPanel({
     try {
       if (m.active) {
         if (!confirm(`Desativar "${m.description}"? Lançamentos já gerados continuam.`)) return;
-        const res = await apiFetch(`/gerencial/recurring/${m.id}`, { method: "DELETE" });
+        const res = await apiFetchStrict(`/gerencial/recurring/${m.id}`, { method: "DELETE" });
         onUpsert(res && res.id ? res : { ...m, active: false });
         toast.success("Modelo desativado.");
       } else {
-        const res: GerencialRecurring = await apiFetch(`/gerencial/recurring/${m.id}`, {
+        const res: GerencialRecurring = await apiFetchStrict(`/gerencial/recurring/${m.id}`, {
           method: "PATCH",
           body: JSON.stringify({ active: true })
         });
@@ -52,14 +52,14 @@ export function RecurringPanel({
         toast.success("Modelo reativado.");
       }
     } catch (err: any) {
-      toast.error(err?.message || "Falha ao alterar.");
+      toast.error(readableError(err, "Falha ao alterar."));
     }
   };
 
   const materialize = async () => {
     setMaterializing(true);
     try {
-      const res: { month: string; created: string[] } = await apiFetch(
+      const res: { month: string; created: string[] } = await apiFetchStrict(
         `/gerencial/recurring/materialize?month=${month}`,
         { method: "POST" }
       );
@@ -71,7 +71,7 @@ export function RecurringPanel({
       );
       if (n > 0) onMaterialized();
     } catch (err: any) {
-      toast.error(err?.message || "Falha ao gerar lançamentos.");
+      toast.error(readableError(err, "Falha ao gerar lançamentos."));
     } finally {
       setMaterializing(false);
     }

@@ -16,7 +16,7 @@ import {
   X,
   ExternalLink
 } from "lucide-react";
-import { apiFetch } from "@/lib/api";
+import { apiFetchStrict, readableError } from "@/lib/api-error";
 import type {
   DashboardResponse,
   ForecastResponse,
@@ -224,7 +224,7 @@ function FechamentoMes() {
       setDashLoading(true);
       setItemsLoading(true);
 
-      (apiFetch(`/gerencial/dashboard?month=${month}`) as Promise<DashboardResponse>)
+      (apiFetchStrict(`/gerencial/dashboard?month=${month}`) as Promise<DashboardResponse>)
         .then((d) => {
           mergeCacheMes(month, { dashboard: d });
           if (id !== reqId.current) return;
@@ -232,13 +232,13 @@ function FechamentoMes() {
         })
         .catch((err: any) => {
           if (id !== reqId.current) return;
-          setError(err?.message || "Falha ao carregar.");
+          setError(readableError(err, "Falha ao carregar."));
         })
         .finally(() => {
           if (id === reqId.current) setDashLoading(false);
         });
 
-      (apiFetch(`/gerencial/dashboard/items?month=${month}`) as Promise<DashboardItemsResponse>)
+      (apiFetchStrict(`/gerencial/dashboard/items?month=${month}`) as Promise<DashboardItemsResponse>)
         .then((it) => {
           mergeCacheMes(month, { items: it.items });
           if (id !== reqId.current) return;
@@ -246,14 +246,14 @@ function FechamentoMes() {
         })
         .catch((err: any) => {
           if (id !== reqId.current) return;
-          setItemsError(err?.message || "Falha ao carregar os títulos do mês.");
+          setItemsError(readableError(err, "Falha ao carregar os títulos do mês."));
         })
         .finally(() => {
           if (id === reqId.current) setItemsLoading(false);
         });
 
       // Tolerante: se a tabela de cotação ainda não existe, segue sem consolidar
-      (apiFetch(`/gerencial/fx-rates?start=${month}&months_ahead=0`) as Promise<FxRatesResponse>)
+      (apiFetchStrict(`/gerencial/fx-rates?start=${month}&months_ahead=0`) as Promise<FxRatesResponse>)
         .then((fx) => fx.rates[0] ?? null)
         .catch(() => null)
         .then((rate) => {
@@ -268,7 +268,7 @@ function FechamentoMes() {
   // Salvar cotação só muda a cotação: refaz só o fx.
   const reloadFx = useCallback(() => {
     const m = month;
-    (apiFetch(`/gerencial/fx-rates?start=${m}&months_ahead=0`) as Promise<FxRatesResponse>)
+    (apiFetchStrict(`/gerencial/fx-rates?start=${m}&months_ahead=0`) as Promise<FxRatesResponse>)
       .then((fx) => fx.rates[0] ?? null)
       .catch(() => null)
       .then((rate) => {
@@ -492,7 +492,7 @@ function FechamentoAno() {
       if (!force) setForecast(null);
       try {
         // forecast e cotações em paralelo; cotação é tolerante (sem tabela => {}).
-        const fxP = (apiFetch(`/gerencial/fx-rates?start=${year}-01&months_ahead=11`) as Promise<FxRatesResponse>)
+        const fxP = (apiFetchStrict(`/gerencial/fx-rates?start=${year}-01&months_ahead=11`) as Promise<FxRatesResponse>)
           .then((fx) => {
             const map: Record<string, number | null> = {};
             for (const r of fx.rates) map[r.month] = r.usd_brl;
@@ -500,7 +500,7 @@ function FechamentoAno() {
           })
           .catch(() => ({}) as Record<string, number | null>);
         const [f, map] = await Promise.all([
-          apiFetch(`/gerencial/forecast?start=${year}-01&months_ahead=11`) as Promise<ForecastResponse>,
+          apiFetchStrict(`/gerencial/forecast?start=${year}-01&months_ahead=11`) as Promise<ForecastResponse>,
           fxP
         ]);
         cacheFechamentoAno.set(year, { forecast: f, rates: map });
@@ -509,7 +509,7 @@ function FechamentoAno() {
         setRates(map);
       } catch (err: any) {
         if (id !== reqId.current) return;
-        setError(err?.message || "Falha ao carregar.");
+        setError(readableError(err, "Falha ao carregar."));
       } finally {
         if (id === reqId.current) setLoading(false);
       }
@@ -881,13 +881,13 @@ function ConsolidatedMonthCard({
     setSaving(true);
     setSaveErr("");
     try {
-      await apiFetch(`/gerencial/fx-rate`, {
+      await apiFetchStrict(`/gerencial/fx-rate`, {
         method: "PUT",
         body: JSON.stringify({ month, usd_brl: parsed })
       });
       onRateSaved();
     } catch (err: any) {
-      setSaveErr(err?.message || "Falha ao salvar.");
+      setSaveErr(readableError(err, "Falha ao salvar."));
     } finally {
       setSaving(false);
     }
@@ -1546,7 +1546,7 @@ function fluxoGet<T>(path: string, force = false): Promise<T> {
     const hit = fluxoPromises.get(path);
     if (hit) return hit as Promise<T>;
   }
-  const p: Promise<unknown> = apiFetch(path).then(
+  const p: Promise<unknown> = apiFetchStrict(path).then(
     (v) => {
       if (fluxoPromises.get(path) === p) fluxoValues.set(path, v);
       return v;
@@ -1600,7 +1600,7 @@ function FluxoTab() {
         const r = await fluxoGet<CashflowResponse>(path, force);
         if (id === reqId.current) setData(r);
       } catch (err: any) {
-        if (id === reqId.current) setError(err?.message || "Falha ao carregar fluxo de caixa.");
+        if (id === reqId.current) setError(readableError(err, "Falha ao carregar fluxo de caixa."));
       } finally {
         if (id === reqId.current) setLoading(false);
       }
@@ -1956,7 +1956,7 @@ function CashflowItemsModal({
         const r = await fluxoGet<CashflowItemsResponse>(cashflowItemsPath(month));
         if (alive) setItems(r.items);
       } catch (err: any) {
-        if (alive) setError(err?.message || "Falha ao carregar.");
+        if (alive) setError(readableError(err, "Falha ao carregar."));
       } finally {
         if (alive) setLoading(false);
       }
@@ -2216,7 +2216,7 @@ function MonthCashRealized({ month, moeda, refreshKey }: { month: string; moeda:
         const r = await fluxoGet<CashflowItemsResponse>(path);
         if (alive) setItems(r.items);
       } catch (err: any) {
-        if (alive) setError(err?.message || "Falha ao carregar o caixa do mês.");
+        if (alive) setError(readableError(err, "Falha ao carregar o caixa do mês."));
       } finally {
         if (alive) setLoading(false);
       }
@@ -2387,7 +2387,7 @@ function ReconciliationSection({
         setOpenCur(oc);
         setOpenNext(on);
       } catch (err: any) {
-        if (id === reqId.current) setError(err?.message || "Falha ao carregar conciliação.");
+        if (id === reqId.current) setError(readableError(err, "Falha ao carregar conciliação."));
       } finally {
         if (id === reqId.current) setLoading(false);
       }
@@ -2604,13 +2604,13 @@ function OpeningBalanceContaEditor({
     setSaving(true);
     setErr("");
     try {
-      await apiFetch(`/gerencial/opening-balance`, {
+      await apiFetchStrict(`/gerencial/opening-balance`, {
         method: "PUT",
         body: JSON.stringify({ month, balances })
       });
       onSaved();
     } catch (e: any) {
-      setErr(e?.message || "Falha ao salvar.");
+      setErr(readableError(e, "Falha ao salvar."));
     } finally {
       setSaving(false);
     }
@@ -2688,7 +2688,7 @@ function RemittancesSection({ refreshKey, onChanged }: { refreshKey: number; onC
       const r = await fluxoGet<RemittancesResponse>(REMITTANCES_PATH, force);
       setItems(r.items);
     } catch (err: any) {
-      setError(err?.message || "Falha ao carregar remessas.");
+      setError(readableError(err, "Falha ao carregar remessas."));
     } finally {
       setLoading(false);
     }
@@ -2707,7 +2707,7 @@ function RemittancesSection({ refreshKey, onChanged }: { refreshKey: number; onC
     setSaving(true);
     setFormErr("");
     try {
-      await apiFetch(`/gerencial/remittances`, {
+      await apiFetchStrict(`/gerencial/remittances`, {
         method: "POST",
         body: JSON.stringify({
           data,
@@ -2726,14 +2726,26 @@ function RemittancesSection({ refreshKey, onChanged }: { refreshKey: number; onC
       load(true);
       onChanged?.();
     } catch (err: any) {
-      setFormErr(err?.message || "Falha ao salvar.");
+      setFormErr(readableError(err, "Falha ao salvar."));
     } finally {
       setSaving(false);
     }
   };
 
-  const remove = async (id: string) => {
-    await apiFetch(`/gerencial/remittances/${id}`, { method: "DELETE" });
+  const remove = async (it: { id: string; data: string; brl_out: number; usd_in: number }) => {
+    if (
+      !confirm(
+        `Apagar a remessa de ${it.data} (${formatCurrency(it.brl_out, "BRL")} → ${formatCurrency(it.usd_in, "USD")})? Não dá pra desfazer.`
+      )
+    )
+      return;
+    try {
+      await apiFetchStrict(`/gerencial/remittances/${it.id}`, { method: "DELETE" });
+      setFormErr("");
+    } catch (err: any) {
+      setFormErr(readableError(err, "Falha ao apagar a remessa."));
+      return;
+    }
     invalidateFluxo();
     load(true);
     onChanged?.();
@@ -2854,7 +2866,7 @@ function RemittancesSection({ refreshKey, onChanged }: { refreshKey: number; onC
                   </p>
                 </div>
                 <button
-                  onClick={() => remove(it.id)}
+                  onClick={() => remove(it)}
                   className="rounded-lg border border-border p-1.5 text-muted hover:border-danger/40 hover:text-danger"
                   title="Remover"
                 >
@@ -2916,7 +2928,7 @@ function TransfersSection({
         const r = await fluxoGet<TransfersResponse>(path, force);
         if (id === reqId.current) setItems(r.items);
       } catch (err: any) {
-        if (id === reqId.current) setError(err?.message || "Falha ao carregar transferências.");
+        if (id === reqId.current) setError(readableError(err, "Falha ao carregar transferências."));
       } finally {
         if (id === reqId.current) setLoading(false);
       }
@@ -2944,7 +2956,7 @@ function TransfersSection({
     setSaving(true);
     setFormErr("");
     try {
-      await apiFetch(`/gerencial/transfers`, {
+      await apiFetchStrict(`/gerencial/transfers`, {
         method: "POST",
         body: JSON.stringify({
           data,
@@ -2962,14 +2974,22 @@ function TransfersSection({
       load(true);
       onChanged?.();
     } catch (err: any) {
-      setFormErr(err?.message || "Falha ao salvar.");
+      setFormErr(readableError(err, "Falha ao salvar."));
     } finally {
       setSaving(false);
     }
   };
 
-  const remove = async (id: string) => {
-    await apiFetch(`/gerencial/transfers/${id}`, { method: "DELETE" });
+  const remove = async (it: { id: string; data: string; amount: number; moeda: Moeda }) => {
+    if (!confirm(`Apagar a transferência de ${it.data} (${formatCurrency(it.amount, it.moeda)})? Não dá pra desfazer.`))
+      return;
+    try {
+      await apiFetchStrict(`/gerencial/transfers/${it.id}`, { method: "DELETE" });
+      setFormErr("");
+    } catch (err: any) {
+      setFormErr(readableError(err, "Falha ao apagar a transferência."));
+      return;
+    }
     invalidateFluxo();
     load(true);
     onChanged?.();
@@ -3092,7 +3112,7 @@ function TransfersSection({
                 )}
               </div>
               <button
-                onClick={() => remove(it.id)}
+                onClick={() => remove(it)}
                 className="rounded-lg border border-border p-1.5 text-muted hover:border-danger/40 hover:text-danger"
                 title="Remover"
               >
