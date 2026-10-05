@@ -3,6 +3,7 @@ import "./globals.css";
 import { AuthProvider } from "@/lib/auth-context";
 import { ToastProvider } from "@/lib/toast-context";
 import { BootstrapGate } from "@/components/gerencial/bootstrap-gate";
+import { AssistWidget } from "@/components/assist-widget";
 
 export const metadata: Metadata = {
   title: "Caracol Gerencial",
@@ -21,6 +22,7 @@ export default function RootLayout({
           <ToastProvider>
             <BootstrapGate>{children}</BootstrapGate>
           </ToastProvider>
+          <AssistWidget app="gerencial" />
         </AuthProvider>
       </body>
     </html>
